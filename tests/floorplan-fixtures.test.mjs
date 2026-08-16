@@ -60,7 +60,12 @@ if (!manifest) {
 
     test(`${fixture.id} proposes the expected number of floor regions`, async () => {
       const buffer = await readFile(new URL(fixture.file, fixtureDirectory));
-      const maxSide = 720;
+      // Must match the analysis resolution in app/page.tsx. The detector's
+      // thresholds are resolution-sensitive, so testing at a different size
+      // than the app ships validates a configuration nobody runs: at 720 the
+      // brochure fixture produced a plausible footprint while the app's 1280
+      // collapsed it to one pixel tall.
+      const maxSide = 1280;
       const scale = Math.min(1, maxSide / Math.max(fixture.width, fixture.height));
       const width = Math.max(1, Math.round(fixture.width * scale));
       const height = Math.max(1, Math.round(fixture.height * scale));
@@ -78,6 +83,18 @@ if (!manifest) {
         const structure = structures[region.id];
         assert.ok(structure.walls.length >= 3, `${fixture.id}/${region.id} should contain a usable wall network`);
         assert.ok(structure.walls.every((wall) => wall.start.every(Number.isFinite) && wall.end.every(Number.isFinite)));
+
+        // Every later stage is expressed relative to the footprint, so a
+        // collapsed one silently corrupts exterior-wall tests, balcony depth,
+        // stair plausibility, the room grid and metric scale. Plans drawn in
+        // colour or thin strokes used to produce footprints a fraction of the
+        // building, in the worst case a single pixel tall.
+        const regionWidth = region.width * info.width;
+        const regionHeight = region.height * info.height;
+        assert.ok(
+          structure.footprint.width >= regionWidth * 0.3 && structure.footprint.height >= regionHeight * 0.3,
+          `${fixture.id}/${region.id} footprint ${Math.round(structure.footprint.width)}x${Math.round(structure.footprint.height)} collapsed inside a ${Math.round(regionWidth)}x${Math.round(regionHeight)} region`,
+        );
       });
 
       if (fixture.id === "fp-001") {

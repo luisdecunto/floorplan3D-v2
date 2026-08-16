@@ -54,6 +54,14 @@ The analyser uses a local coordinate frame. “Horizontal” and “vertical” 
 
 The 1,280-pixel limit balances mobile memory and speed against preservation of thin balcony rails, stair treads, and door arcs. A previous 900-pixel limit erased too many one-pixel signals in screenshots.
 
+### Ink, colour, and the building envelope
+
+Printed floorplans routinely draw structure in colour rather than black: tan or brown exterior walls, blue bathroom fills, olive hatching. Deciding "is this ink?" on luminance alone treats a mid-tone coloured wall as paper. The envelope test therefore accepts a pixel as ink when it is dark **or** clearly saturated and not near-white.
+
+The building footprint is measured directly from that ink, not inferred from whichever wall segments the tracer accepted. This ordering matters more than it appears: every later stage is expressed relative to the footprint — the exterior-wall test that decides door versus window, balcony depth, stair plausibility, the room grid, and metric scale. A footprint derived from tracing collapses exactly when tracing fails, and then silently corrupts all of them. Two of the seven regression fixtures previously produced footprints a fraction of the true building, one of them a single pixel tall, while every test still passed.
+
+The traced-wall bounds remain preferred, because they sit on wall centre lines rather than the outer edge of a stroke, and because ink legitimately spills past the building wherever a balcony rail, dimension chain, or caption is drawn. The ink envelope is used only as a rescue, when the traced footprint has visibly collapsed relative to the ink rather than merely being tighter than it.
+
 ### Paper and image bounds
 
 For each proposed floor region, the analyser searches for rows containing a usable paper margin and rejects nearly solid dark rows such as phone or browser chrome. It then calculates an Otsu luminance threshold from the remaining pixels. This adapts the black/white cutoff to the contrast of each uploaded image.
@@ -312,7 +320,7 @@ Every level still receives a `scale-needed` issue while the scale source is `doo
 - The upper slab is split into four pieces around a stairwell opening.
 - The source crop is mapped over the floor pieces with matching texture coordinates.
 - Outdoor spaces extend the viewer's framing bounds.
-- Wall opacity is adjustable without changing the canonical structure.
+- Wall cutaway clips every wall at a section height, revealing the interior without changing the canonical structure. It is a section cut rather than a transparency fade: walls are near-white on a near-white ground, so lowering their alpha cannot actually reveal what is behind them — it only removes their shadow, which is what the earlier "wall opacity" control did.
 - Exploded view changes display separation but not stored floor elevations.
 
 ## 12. Review, correction, and persistence
@@ -352,6 +360,10 @@ The repository tests the detector at several levels:
 
 The private floorplan images are excluded from the deployed site and public repository. Their manifest explicitly states that they are not approved for model training or public redistribution.
 
+### Test resolution must match the app
+
+The fixture tests analyse at the same 1,280-pixel limit the app uses. They previously ran at 720, and the detector's thresholds are resolution-sensitive enough that this changed its behaviour qualitatively rather than marginally: at 720 the brochure fixture produced a plausible footprint, while at the app's own 1,280 the same fixture collapsed to a footprint one pixel tall. The whole suite was green against a configuration that never shipped. Any future change to the analysis resolution in `app/page.tsx` must be mirrored here.
+
 ## 14. Current limitations
 
 The main limitations of the current implementation are:
@@ -367,6 +379,7 @@ The main limitations of the current implementation are:
 9. **Local persistence only.** IndexedDB projects do not automatically appear on another phone or computer.
 10. **Generated stair archetype.** The 3D connection is a reliable half-paced representation for the current validation case, not a complete catalogue of stair types.
 11. **Correction is opening- and wall-selection based, not free-form drawing.** Moving a wall's endpoint or drawing a brand-new wall is not yet supported; the corrections available today are removing/adding/retyping/repositioning openings and removing a wall.
+12. **Interior partitions are still under-detected.** The light tier described in §6 recovers some thin partitions but is a stopgap: it decides by stroke thickness and endpoint proximity, which is a proxy for the real question. A wall is defined by dividing space, so the correct test is functional — does removing this line merge two otherwise separate regions of free space? On the two-floor validation residence the light tier recovers no additional partitions at all, and several small rooms remain unenclosed. Replacing thickness heuristics with that space-division test, and deriving rooms from the resulting partition of free space rather than by re-rasterising walls onto a 72 × 72 grid, is the next substantial accuracy step.
 
 ## 15. Evidence hierarchy and future direction
 

@@ -193,7 +193,7 @@ export default function Home() {
   const [activeLevel, setActiveLevel] = useState("ground");
   const [visibleLevels, setVisibleLevels] = useState(() => new Set(["ground", "upper"]));
   const [exploded, setExploded] = useState(false);
-  const [wallOpacity, setWallOpacity] = useState(1);
+  const [wallCutaway, setWallCutaway] = useState(1);
   const [analysisStep, setAnalysisStep] = useState(0);
   const [mobilePanel, setMobilePanel] = useState<"levels" | "canvas" | "details">("canvas");
   const [document, setDocument] = useState<FloorplanDocumentV2 | null>(null);
@@ -297,7 +297,7 @@ export default function Home() {
     setAnalysisSize(proposedSize);
     setActiveLevel(proposedRegions[0]?.id ?? "ground");
     setVisibleLevels(new Set(proposedRegions.slice(0, 2).map((region) => region.id)));
-    setWallOpacity(1);
+    setWallCutaway(1);
     setSelectedWallId(null);
     setProjectMessage(null);
     setStage("workspace");
@@ -502,13 +502,13 @@ export default function Home() {
         setSelectedWallId={setSelectedWallId}
         setStage={setStage}
         setViewMode={setViewMode}
-        setWallOpacity={setWallOpacity}
+        setWallCutaway={setWallCutaway}
         toggleLevel={toggleLevel}
         toggleOutdoorArea={toggleOutdoorArea}
         undoEdit={undoEdit}
         viewMode={viewMode}
         visibleLevels={visibleLevels}
-        wallOpacity={wallOpacity}
+        wallCutaway={wallCutaway}
       />
     );
   }
@@ -624,13 +624,13 @@ function Workspace({
   setSelectedWallId,
   setStage,
   setViewMode,
-  setWallOpacity,
+  setWallCutaway,
   toggleLevel,
   toggleOutdoorArea,
   undoEdit,
   viewMode,
   visibleLevels,
-  wallOpacity,
+  wallCutaway,
 }: {
   activeLevel: string;
   addOpening: (kind: "door" | "window") => void;
@@ -660,13 +660,13 @@ function Workspace({
   setSelectedWallId: (id: string | null) => void;
   setStage: (stage: AppStage) => void;
   setViewMode: (mode: ViewMode) => void;
-  setWallOpacity: (opacity: number) => void;
+  setWallCutaway: (cutaway: number) => void;
   toggleLevel: (id: string) => void;
   toggleOutdoorArea: (id: string, included: boolean) => void;
   undoEdit: () => void;
   viewMode: ViewMode;
   visibleLevels: Set<string>;
-  wallOpacity: number;
+  wallCutaway: number;
 }) {
   const selectedWall = structures[activeLevel]?.walls.find((wall) => wall.id === selectedWallId) ?? null;
   const levelIssues = document?.issues.filter((issue) => !issue.levelId || issue.levelId === activeLevel) ?? [];
@@ -771,21 +771,21 @@ function Workspace({
               />
             ) : (
               <Suspense fallback={<div className="viewer-loading"><Box size={22} /><span>Building the 3D twin…</span></div>}>
-                <TwinViewer exploded={exploded} levels={previewLevels} visibleLevels={visibleLevels} wallOpacity={wallOpacity} />
+                <TwinViewer exploded={exploded} levels={previewLevels} visibleLevels={visibleLevels} wallCutaway={wallCutaway} />
               </Suspense>
             )}
             {viewMode === "twin" && (
               <label className="wall-opacity-control">
-                <span><SlidersHorizontal size={14} /> Wall opacity</span>
+                <span><SlidersHorizontal size={14} /> Wall cutaway</span>
                 <input
                   type="range"
                   min="0.15"
                   max="1"
                   step="0.05"
-                  value={wallOpacity}
-                  onChange={(event) => setWallOpacity(Number(event.target.value))}
+                  value={wallCutaway}
+                  onChange={(event) => setWallCutaway(Number(event.target.value))}
                 />
-                <output>{Math.round(wallOpacity * 100)}%</output>
+                <output>{Math.round(wallCutaway * 100)}%</output>
               </label>
             )}
             <div className="canvas-hint">

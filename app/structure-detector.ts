@@ -106,6 +106,98 @@ function luminance(pixels: ArrayLike<number>, index: number) {
   return 0.299 * pixels[index] + 0.587 * pixels[index + 1] + 0.114 * pixels[index + 2];
 }
 
+/**
+ * Saturation of a pixel, 0 for any grey and rising toward 1 for a strong hue.
+ *
+ * Printed floorplans routinely draw structure in colour rather than black:
+ * tan or brown exterior walls, blue bathroom fills, olive hatching. Judging
+ * "is this ink?" on luminance alone treats a mid-tone brown wall as paper,
+ * which is why the footprint of a colour-drawn plan can collapse to a
+ * fraction of the real building.
+ */
+function saturation(pixels: ArrayLike<number>, index: number) {
+  const maximum = Math.max(pixels[index], pixels[index + 1], pixels[index + 2]);
+  const minimum = Math.min(pixels[index], pixels[index + 1], pixels[index + 2]);
+  return maximum === 0 ? 0 : (maximum - minimum) / maximum;
+}
+
+/**
+ * Ink test used for the building envelope: a pixel is ink when it is dark, or
+ * when it is clearly coloured and not near-white. Deliberately more permissive
+ * than the wall-tracing masks, because its job is to bound the drawing rather
+ * than to decide what is structural.
+ */
+function isEnvelopeInk(pixels: ArrayLike<number>, index: number, threshold: number) {
+  if (pixels[index + 3] <= 32) return false;
+  const value = luminance(pixels, index);
+  if (value < threshold) return true;
+  return saturation(pixels, index) > 0.25 && value < 225;
+}
+
+/**
+ * Extent of the drawing itself, measured straight from the ink.
+ *
+ * The footprint used to be inferred from whichever wall segments the tracer
+ * managed to accept, so a plan whose walls were too thin or too colourful to
+ * trace produced a footprint far smaller than the building — in the worst
+ * observed case a single pixel tall. Every later stage is expressed relative
+ * to the footprint (exterior-wall tests, balcony depth, stair plausibility,
+ * the room grid, metric scale), so that error silently corrupted all of them.
+ * Measuring the envelope from ink keeps it independent of tracing success.
+ *
+ * Rows and columns holding only a trace of ink are dropped first, so a
+ * dimension chain or a caption outside the building does not inflate it.
+ */
+function inkEnvelope(
+  pixels: ArrayLike<number>,
+  width: number,
+  bounds: Bounds,
+  threshold: number,
+): Bounds | null {
+  const spanX = bounds.maxX - bounds.minX + 1;
+  const spanY = bounds.maxY - bounds.minY + 1;
+  if (spanX <= 2 || spanY <= 2) return null;
+  const columns = new Uint32Array(spanX);
+  const rows = new Uint32Array(spanY);
+  let total = 0;
+  for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
+    for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+      if (!isEnvelopeInk(pixels, (y * width + x) * 4, threshold)) continue;
+      columns[x - bounds.minX] += 1;
+      rows[y - bounds.minY] += 1;
+      total += 1;
+    }
+  }
+  if (total < 64) return null;
+
+  // A structural line crossing the plan marks a large share of its row or
+  // column; stray text and dimension ticks mark very few. Requiring a small
+  // fraction of the span separates the two without needing a tuned pixel count.
+  const columnFloor = Math.max(2, spanY * 0.02);
+  const rowFloor = Math.max(2, spanX * 0.02);
+  let minX = -1;
+  let maxX = -1;
+  for (let index = 0; index < spanX; index += 1) {
+    if (columns[index] < columnFloor) continue;
+    if (minX < 0) minX = index;
+    maxX = index;
+  }
+  let minY = -1;
+  let maxY = -1;
+  for (let index = 0; index < spanY; index += 1) {
+    if (rows[index] < rowFloor) continue;
+    if (minY < 0) minY = index;
+    maxY = index;
+  }
+  if (minX < 0 || minY < 0 || maxX - minX < 4 || maxY - minY < 4) return null;
+  return {
+    minX: bounds.minX + minX,
+    minY: bounds.minY + minY,
+    maxX: bounds.minX + maxX,
+    maxY: bounds.minY + maxY,
+  };
+}
+
 function otsuThreshold(pixels: ArrayLike<number>, width: number, bounds: Bounds) {
   const histogram = new Uint32Array(256);
   let total = 0;
@@ -1018,6 +1110,33 @@ function gapEvidence(
   return null;
 }
 
+/**
+ * Combine the traced-wall bounds with the ink envelope.
+ *
+ * The traced bounds are normally right and are kept: they sit on wall centre
+ * lines, and the ink legitimately spills past the building wherever a balcony
+ * rail, dimension chain or caption is drawn, so the ink envelope is routinely
+ * the larger of the two by a healthy margin. The envelope is therefore only a
+ * rescue for a footprint that has visibly collapsed, not a general correction.
+ *
+ * "Collapsed" is judged against the ink rather than against a pixel constant:
+ * an axis that spans a small fraction of the ink, or a footprint whose area is
+ * a small fraction of the ink's, is the tracer having failed on a thin or
+ * colour-drawn plan. Ordinary balcony and annotation overshoot stays well
+ * above these levels, so a healthy plan is left untouched.
+ */
+function reconcileFootprint(traced: Bounds, ink: Bounds | null): Bounds {
+  if (!ink) return traced;
+  const tracedWidth = Math.max(0, traced.maxX - traced.minX);
+  const tracedHeight = Math.max(0, traced.maxY - traced.minY);
+  const inkWidth = Math.max(1, ink.maxX - ink.minX);
+  const inkHeight = Math.max(1, ink.maxY - ink.minY);
+  const areaRatio = (tracedWidth * tracedHeight) / (inkWidth * inkHeight);
+  const collapsedAxis = tracedWidth < inkWidth * 0.25 || tracedHeight < inkHeight * 0.25;
+  if (areaRatio >= 0.45 && !collapsedAxis) return traced;
+  return { ...ink };
+}
+
 function segmentBounds(segments: Segment[], fallback: Bounds): Bounds {
   if (!segments.length) return fallback;
   const horizontal = segments.filter((segment) => segment.axis === "horizontal");
@@ -1914,7 +2033,13 @@ function detectFloorStructureAligned(
 ): DetectedStructure {
   const { bounds, threshold, strongMask, mediumMask, windowMask, rawSegments, wallThickness, lightWallThickness, structural, mediumCandidates, minimumDimension, minimumRun } = inspectStructureEvidence(pixels, width, height, region);
   const thickCore = structural.filter((segment) => segment.thickness >= wallThickness * 0.62 || segment.to - segment.from >= minimumDimension * 0.3);
-  const footprintBounds = segmentBounds(thickCore.length ? thickCore : structural, bounds);
+  const tracedBounds = segmentBounds(thickCore.length ? thickCore : structural, bounds);
+  // Prefer the traced walls, which sit on the wall centre lines, but fall back
+  // to the ink envelope wherever tracing clearly under-covers the drawing.
+  // Tracing collapses on plans drawn in colour or in very thin strokes, and a
+  // footprint that is far smaller than the ink is always the tracer failing,
+  // never a real building — nothing structural can lie outside the ink.
+  const footprintBounds = reconcileFootprint(tracedBounds, inkEnvelope(pixels, width, bounds, threshold));
   const anchorTolerance = Math.max(3, wallThickness * 0.75);
   const lightStructural = lightStructuralSegments(mediumCandidates, structural, minimumDimension, footprintBounds, anchorTolerance);
   const anchoredHeavy = recoverWallAnchors(structural, strongMask, width, height, footprintBounds, wallThickness, "heavy");

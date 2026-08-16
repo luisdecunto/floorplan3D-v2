@@ -22,12 +22,12 @@ export default function TwinViewer({
   exploded,
   levels,
   visibleLevels,
-  wallOpacity,
+  wallCutaway,
 }: {
   exploded: boolean;
   levels: Level[];
   visibleLevels: Set<string>;
-  wallOpacity: number;
+  wallCutaway: number;
 }) {
   const explodeDistance = exploded ? 2.35 : 0;
   const stairConnections = buildStairConnections(levels, explodeDistance);
@@ -46,7 +46,7 @@ export default function TwinViewer({
               level={level}
               opening={index > 0 ? stairOpenings.get(level.id) ?? stairwellOpening(level) : null}
               explodeOffset={index * explodeDistance}
-              wallOpacity={wallOpacity}
+              wallCutaway={wallCutaway}
             />
           ))}
           {stairConnections.map((connection) => (
@@ -68,12 +68,12 @@ function LevelModel({
   level,
   opening,
   explodeOffset,
-  wallOpacity,
+  wallCutaway,
 }: {
   level: Level;
   opening: StairwellOpening | null;
   explodeOffset: number;
-  wallOpacity: number;
+  wallCutaway: number;
 }) {
   const y = level.elevation + explodeOffset;
   const pieces = slabPieces(level, opening);
@@ -83,7 +83,7 @@ function LevelModel({
       {level.floorTextureUrl && <PlanFloor level={level} pieces={pieces} elevation={y} />}
       {opening && <StairwellTrim opening={opening} elevation={y} />}
       {(level.outdoorAreas ?? []).map((area) => <OutdoorAreaModel key={area.id} area={area} elevation={y} />)}
-      {level.walls.map((wall) => <WallModel key={wall.id} wall={wall} elevation={y} levelHeight={level.ceilingHeight} wallOpacity={wallOpacity} />)}
+      {level.walls.map((wall) => <WallModel key={wall.id} wall={wall} elevation={y} levelHeight={level.ceilingHeight} wallCutaway={wallCutaway} />)}
     </group>
   );
 }
@@ -291,7 +291,7 @@ function OutdoorAreaModel({ area, elevation }: { area: OutdoorArea; elevation: n
   );
 }
 
-function WallModel({ wall, elevation, levelHeight, wallOpacity }: { wall: Wall; elevation: number; levelHeight: number; wallOpacity: number }) {
+function WallModel({ wall, elevation, levelHeight, wallCutaway }: { wall: Wall; elevation: number; levelHeight: number; wallCutaway: number }) {
   const dx = wall.end[0] - wall.start[0];
   const dz = wall.end[1] - wall.start[1];
   const length = Math.hypot(dx, dz);
@@ -300,16 +300,23 @@ function WallModel({ wall, elevation, levelHeight, wallOpacity }: { wall: Wall; 
   const pieces: ReactNode[] = [];
   let cursor = 0;
 
+  // Horizontal section cut. Walls are near-white on a near-white ground, so
+  // fading their alpha cannot actually reveal the interior — it only removes
+  // their shadow. Clipping every wall at a section height does reveal it, and
+  // keeps door and window geometry below the cut intact.
+  const cutHeight = levelHeight * wallCutaway;
   const clamp = (value: number) => Math.max(0, Math.min(length, value));
-  const addBox = (key: string, from: number, to: number, height: number, base: number, color = "#f3f0e8", opacity = wallOpacity) => {
-    if (to - from <= 0.02 || height <= 0.02) return;
+  const addBox = (key: string, from: number, to: number, height: number, base: number, color = "#f3f0e8", opacity = 1) => {
+    if (base >= cutHeight - 0.02) return;
+    const clippedHeight = Math.min(height, cutHeight - base);
+    if (to - from <= 0.02 || clippedHeight <= 0.02) return;
     const distance = (from + to) / 2;
     const t = distance / length;
     const x = wall.start[0] + dx * t;
     const z = wall.start[1] + dz * t;
     pieces.push(
-      <mesh key={key} position={[x, elevation + base + height / 2, z]} rotation={[0, -angle, 0]} castShadow={opacity > 0.72} receiveShadow>
-        <boxGeometry args={[to - from, height, wall.thickness ?? 0.18]} />
+      <mesh key={key} position={[x, elevation + base + clippedHeight / 2, z]} rotation={[0, -angle, 0]} castShadow receiveShadow>
+        <boxGeometry args={[to - from, clippedHeight, wall.thickness ?? 0.18]} />
         <meshStandardMaterial color={color} roughness={0.72} transparent={opacity < 1} opacity={opacity} depthWrite={opacity >= 0.99} />
       </mesh>,
     );
