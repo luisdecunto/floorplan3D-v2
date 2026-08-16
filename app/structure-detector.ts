@@ -536,19 +536,37 @@ function splitByStrokeSupport(
 ) {
   return segments.flatMap((segment) => {
     if (segment.thickness < 3 || segment.to - segment.from < minimumRun * 1.6) return [segment];
-    const radius = Math.max(1, Math.floor(segment.thickness / 2));
+    // Measure the contiguous ink core across the stroke and compare it to the
+    // segment's own thickness. The question this test exists to answer is
+    // whether a thin annotation has been fused onto a thick wall, and a ratio
+    // against the wall's thickness answers it directly: a dimension line is a
+    // small fraction of the wall it touches, while a wall that merely tapers
+    // stays close to full width.
+    //
+    // Counting ink inside a fixed window sized from the segment's maximum
+    // thickness asked a different question, and a wall drawn one pixel
+    // narrower along part of its length failed it — three ink pixels in a
+    // five-wide window scores 0.60 against a 0.62 cutoff, which silently
+    // discarded the lower half of a real structural wall.
+    const radius = Math.max(1, Math.floor(segment.thickness / 2)) + 1;
+    const minimumCore = Math.max(2, segment.thickness * 0.5);
     const supported: boolean[] = [];
     for (let coordinate = Math.floor(segment.from); coordinate <= Math.ceil(segment.to); coordinate += 1) {
-      let dark = 0;
-      let sampled = 0;
+      let longest = 0;
+      let run = 0;
       for (let offset = -radius; offset <= radius; offset += 1) {
         const x = Math.round(segment.axis === "horizontal" ? coordinate : segment.line + offset);
         const y = Math.round(segment.axis === "horizontal" ? segment.line + offset : coordinate);
-        if (x < 0 || x >= width || y < 0 || y >= height) continue;
-        if (mask[y * width + x]) dark += 1;
-        sampled += 1;
+        if (x < 0 || x >= width || y < 0 || y >= height) {
+          run = 0;
+          continue;
+        }
+        if (mask[y * width + x]) {
+          run += 1;
+          if (run > longest) longest = run;
+        } else run = 0;
       }
-      supported.push(dark / Math.max(1, sampled) >= 0.62);
+      supported.push(longest >= minimumCore);
     }
 
     const pieces: Segment[] = [];
@@ -1431,17 +1449,28 @@ function recoverEmbeddedOpenings(
       });
     };
 
+    // Solidity is measured as a contiguous ink core relative to the wall's own
+    // thickness, for the same reason as splitByStrokeSupport: counting ink in
+    // a fixed window sized from the wall's widest point reports a wall that
+    // tapers by a pixel as a run of narrow gaps, which then get classified as
+    // a row of spurious doorways.
+    const minimumCore = Math.max(2, wall.thickness * 0.5);
     for (let coordinate = Math.floor(scanFrom); coordinate <= Math.ceil(scanTo); coordinate += 1) {
-      let dark = 0;
-      let sampled = 0;
+      let longest = 0;
+      let run = 0;
       for (let offset = -radius; offset <= radius; offset += 1) {
         const x = Math.round(wall.axis === "horizontal" ? coordinate : line + offset);
         const y = Math.round(wall.axis === "horizontal" ? line + offset : coordinate);
-        if (x < 0 || x >= width || y < 0 || y >= height) continue;
-        if (strongMask[y * width + x]) dark += 1;
-        sampled += 1;
+        if (x < 0 || x >= width || y < 0 || y >= height) {
+          run = 0;
+          continue;
+        }
+        if (strongMask[y * width + x]) {
+          run += 1;
+          if (run > longest) longest = run;
+        } else run = 0;
       }
-      const solid = dark / Math.max(1, sampled) >= 0.54;
+      const solid = longest >= minimumCore;
       if (!solid) {
         if (gapStart < 0) gapStart = coordinate;
         lastGap = coordinate;

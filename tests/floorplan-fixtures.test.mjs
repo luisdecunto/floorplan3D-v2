@@ -138,7 +138,11 @@ if (!manifest) {
             && normalizedX > 0.55
             && normalizedX < 0.7
             && normalizedStartY < 0.45
-            && normalizedEndY > 0.68
+            // A structural wall runs from one boundary to another; it does not
+            // stop in mid-air. This previously accepted 0.68, which a wall
+            // truncated a quarter of the way short still satisfied, leaving a
+            // hole between the entrance hall and the bedroom in the 3D model.
+            && normalizedEndY > 0.95
             && wall.openings.some((opening) => opening.kind === "door");
         });
         assert.ok(entranceBedroomWall, "the wall between the entrance hallway and bedroom should survive across its doorway gap");
