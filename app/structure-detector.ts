@@ -1508,7 +1508,7 @@ function detectOutdoorAreas(rawSegments: Segment[], footprint: Bounds, wallThick
       const depth = (segment.line - edge) * direction;
       return depth >= footprintHeight * 0.1
         && depth <= footprintHeight * 0.62
-        && overlapRatio(segment.from, segment.to, footprint.minX, footprint.maxX) >= 0.44;
+        && overlapRatio(segment.from, segment.to, footprint.minX, footprint.maxX) >= 0.30;
     }).sort((a, b) => Math.abs(a.line - edge) - Math.abs(b.line - edge));
 
     for (const rail of rails) {
