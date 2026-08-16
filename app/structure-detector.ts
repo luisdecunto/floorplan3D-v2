@@ -1,5 +1,5 @@
 import type { SourceRegion } from "./plan-regions";
-import type { Level, Opening, OutdoorArea, Stair, Wall } from "./scene-data";
+import type { Level, Opening, OutdoorArea, Room, Stair, Wall } from "./scene-data";
 
 export type Axis = "horizontal" | "vertical";
 
@@ -19,6 +19,10 @@ export type DetectedWall = {
   thickness: number;
   confidence: number;
   openings: DetectedOpening[];
+  /** Heavy walls come from the strong-threshold mask; light walls are thinner
+   * partitions recovered from a fainter mask and validated by requiring both
+   * endpoints to terminate at another wall or the footprint edge. */
+  weight: "heavy" | "light";
 };
 
 export type DetectedOutdoorArea = {
@@ -28,6 +32,17 @@ export type DetectedOutdoorArea = {
   y: number;
   width: number;
   height: number;
+  confidence: number;
+};
+
+export type DetectedRoom = {
+  id: string;
+  /** Bounding rectangle of the enclosed region in deskewed pixel space. Rooms
+   * are approximated by their bounding box, not an exact rectilinear outline:
+   * correct for the rectangular rooms typical of residential plans, but an
+   * L-shaped room will report a box that extends past its true footprint. */
+  polygon: [number, number][];
+  areaPx: number;
   confidence: number;
 };
 
@@ -49,6 +64,7 @@ export type DetectedStructure = {
   walls: DetectedWall[];
   outdoorAreas: DetectedOutdoorArea[];
   stairs: DetectedStair[];
+  rooms: DetectedRoom[];
   floorTextureUrl?: string;
   footprint: { x: number; y: number; width: number; height: number };
   roomCount: number;
@@ -75,6 +91,7 @@ type Segment = {
   to: number;
   thickness: number;
   density: number;
+  weight?: "heavy" | "light";
 };
 
 type GapEvidence = {
@@ -578,6 +595,114 @@ function structuralSegments(segments: Segment[], minimumDimension: number, wallT
   });
 }
 
+/**
+ * A candidate endpoint is anchored when it terminates at a perpendicular wall
+ * (a T or L junction) or at the footprint edge. This is the rule that lets a
+ * genuinely thin partition survive while furniture and text, which float
+ * free of the wall network, do not.
+ */
+function endpointAnchored(coordinate: number, line: number, axis: Axis, pool: Segment[], tolerance: number, footprint: Bounds) {
+  const onEdge = axis === "horizontal"
+    ? Math.abs(coordinate - footprint.minX) <= tolerance || Math.abs(coordinate - footprint.maxX) <= tolerance
+    : Math.abs(coordinate - footprint.minY) <= tolerance || Math.abs(coordinate - footprint.maxY) <= tolerance;
+  if (onEdge) return true;
+  return pool.some((other) => (
+    other.axis !== axis
+    && Math.abs(other.line - coordinate) <= tolerance
+    && line >= other.from - tolerance
+    && line <= other.to + tolerance
+  ));
+}
+
+/**
+ * Recover thin partitions that a single strong-threshold mask would drop.
+ * Candidates come from the fainter medium mask and must be both long enough
+ * and, unlike the heavy tier, anchored at both ends against the already
+ * accepted wall network. Two passes let a light wall anchor against another
+ * light wall accepted in the first pass (e.g. an interior closet corner),
+ * without ever letting an unanchored candidate validate itself.
+ */
+function lightStructuralSegments(
+  candidates: Segment[],
+  heavyPool: Segment[],
+  minimumDimension: number,
+  footprint: Bounds,
+  tolerance: number,
+) {
+  const overlapsHeavy = (segment: Segment) => heavyPool.some((heavy) => (
+    heavy.axis === segment.axis
+    && Math.abs(heavy.line - segment.line) <= tolerance
+    && Math.max(segment.from, heavy.from) <= Math.min(segment.to, heavy.to)
+  ));
+  let remaining = candidates.filter((segment) => (
+    segment.to - segment.from >= Math.max(8, minimumDimension * 0.045)
+    && segment.density >= 0.3
+    && !overlapsHeavy(segment)
+  ));
+
+  const accepted: Segment[] = [];
+  let pool = [...heavyPool];
+  // Several passes let a chain of thin partitions bootstrap off a single
+  // heavy wall or footprint edge, one T-junction at a time, instead of
+  // requiring every partition to reach a heavy wall directly.
+  for (let pass = 0; pass < 4; pass += 1) {
+    const stillRemaining: Segment[] = [];
+    remaining.forEach((segment) => {
+      const anchored = endpointAnchored(segment.from, segment.line, segment.axis, pool, tolerance, footprint)
+        && endpointAnchored(segment.to, segment.line, segment.axis, pool, tolerance, footprint);
+      if (anchored) {
+        const tagged: Segment = { ...segment, weight: "light" };
+        accepted.push(tagged);
+        pool = [...pool, tagged];
+      } else {
+        stillRemaining.push(segment);
+      }
+    });
+    remaining = stillRemaining;
+  }
+  return accepted;
+}
+
+/**
+ * Dimension chains are thin, near-perfectly straight, and carry short witness
+ * ticks wherever a sub-measurement boundary crosses them, including in the
+ * middle of the span, not just at their two ends the way a real wall's T or L
+ * junctions do. A wall segment does not normally have another stroke crossing
+ * its middle, so one interior tick is already strong annotation evidence.
+ */
+function hasInteriorTickMarks(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  axis: Axis,
+  line: number,
+  from: number,
+  to: number,
+  thickness: number,
+) {
+  const span = to - from;
+  const margin = Math.max(6, span * 0.12);
+  const innerFrom = from + margin;
+  const innerTo = to - margin;
+  if (innerTo <= innerFrom) return false;
+  const step = Math.max(1, Math.round((innerTo - innerFrom) / 24));
+  for (let coordinate = innerFrom; coordinate <= innerTo; coordinate += step) {
+    const run = longestPerpendicularRun(mask, width, height, axis, coordinate, line, 18);
+    if (run > thickness + 3 && run <= 16) return true;
+  }
+  return false;
+}
+
+function isDimensionAnnotation(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  segment: Segment,
+) {
+  if (segment.thickness > 3 || segment.density < 0.93) return false;
+  return hasInteriorTickMarks(mask, width, height, segment.axis, segment.line, segment.from, segment.to, segment.thickness);
+}
+
 function recoverWallAnchors(
   segments: Segment[],
   mask: Uint8Array,
@@ -585,6 +710,7 @@ function recoverWallAnchors(
   height: number,
   footprint: Bounds,
   wallThickness: number,
+  defaultWeight?: "heavy" | "light",
 ) {
   const clusters: Segment[][] = [];
   segments.forEach((segment) => {
@@ -615,7 +741,7 @@ function recoverWallAnchors(
     let gap = 0;
     const flush = () => {
       if (start < 0 || lastSolid - start + 1 < Math.max(4, wallThickness * 0.58)) return;
-      anchors.push({ axis, line, from: start, to: lastSolid, thickness, density: 0.78 });
+      anchors.push({ axis, line, from: start, to: lastSolid, thickness, density: 0.78, weight: defaultWeight });
     };
 
     for (let coordinate = Math.floor(scanFrom); coordinate <= Math.ceil(scanTo); coordinate += 1) {
@@ -755,6 +881,55 @@ function doorSymbolScore(
   return best;
 }
 
+export /**
+ * A drawn window is normally two (sometimes three) parallel glazing lines
+ * running the full width of the gap, close to the wall face. That produces
+ * two narrow, near-solid density peaks a few pixels apart in the window
+ * mask. A door's swing arc also lands inside the same mask, but a curve
+ * only crosses any single offset briefly, so it never forms that tight,
+ * near-solid pair. This is a stronger and more specific test than a single
+ * "is there dark stuff nearby" density check, which a dimension-line
+ * extension tick or a swing arc can both satisfy.
+ */
+function windowSymbolScore(
+  windowMask: Uint8Array,
+  width: number,
+  height: number,
+  axis: Axis,
+  line: number,
+  from: number,
+  to: number,
+  thickness: number,
+) {
+  const maxOffset = Math.max(6, Math.round(thickness * 2.5));
+  const profile: number[] = [];
+  for (let offset = -maxOffset; offset <= maxOffset; offset += 1) {
+    let dark = 0;
+    let sampled = 0;
+    for (let coordinate = Math.ceil(from); coordinate <= Math.floor(to); coordinate += 1) {
+      const x = Math.round(axis === "horizontal" ? coordinate : line + offset);
+      const y = Math.round(axis === "horizontal" ? line + offset : coordinate);
+      if (x < 0 || x >= width || y < 0 || y >= height) continue;
+      if (windowMask[y * width + x]) dark += 1;
+      sampled += 1;
+    }
+    profile.push(dark / Math.max(1, sampled));
+  }
+  const peakIndices: number[] = [];
+  profile.forEach((density, index) => { if (density >= 0.82) peakIndices.push(index); });
+  const maxSeparation = Math.max(8, thickness * 1.3);
+  let bestPair = 0;
+  for (let i = 0; i < peakIndices.length; i += 1) {
+    for (let j = i + 1; j < peakIndices.length; j += 1) {
+      const separation = peakIndices[j] - peakIndices[i];
+      if (separation >= 1 && separation <= maxSeparation) {
+        bestPair = Math.max(bestPair, Math.min(profile[peakIndices[i]], profile[peakIndices[j]]));
+      }
+    }
+  }
+  return bestPair;
+}
+
 function gapEvidence(
   mask: Uint8Array,
   windowMask: Uint8Array,
@@ -808,7 +983,16 @@ function gapEvidence(
   const onOuterWall = axis === "horizontal"
     ? Math.min(Math.abs(line - footprint.minY), Math.abs(line - footprint.maxY)) <= outerTolerance
     : Math.min(Math.abs(line - footprint.minX), Math.abs(line - footprint.maxX)) <= outerTolerance;
+  const windowSymbol = windowSymbolScore(windowMask, width, height, axis, line, from, to, thickness);
 
+  // A clean double-line glazing pair is decisive window evidence, but only on
+  // an exterior wall: windows are uncommon in partitions, and closet
+  // shelving can draw the same tight parallel pair. It only yields to a door
+  // reading that is itself close to certain, which keeps a real swing door
+  // safe (its arc never forms this tight parallel pair).
+  if (onOuterWall && windowSymbol >= 0.8 && symbol.score < 0.85) {
+    return { kind: "window", confidence: clamp(0.7 + windowSymbol * 0.25, 0.75, 0.96), evidence: "symbol" };
+  }
   if (symbol.score >= 0.46 && symbol.leaf >= 0.42 && symbol.arc >= 0.34) {
     return {
       kind: "door",
@@ -915,6 +1099,7 @@ function buildWalls(
     let totalWeight = sorted[0].to - sorted[0].from + 1;
     let thickness = sorted[0].thickness;
     let openings: DetectedOpening[] = [];
+    let hasHeavySegment = sorted[0].weight !== "light";
 
     const finish = () => {
       if (wallEnd - wallStart < 4) return;
@@ -929,6 +1114,7 @@ function buildWalls(
         thickness,
         confidence: clamp(0.66 + Math.min(0.2, (wallEnd - wallStart) / 900) + Math.min(0.08, thickness / 80), 0.64, 0.94),
         openings,
+        weight: hasHeavySegment ? "heavy" : "light",
       });
     };
 
@@ -940,6 +1126,7 @@ function buildWalls(
         totalWeight += weight;
         wallEnd = Math.max(wallEnd, segment.to);
         thickness = Math.max(thickness, segment.thickness);
+        hasHeavySegment = hasHeavySegment || segment.weight !== "light";
         continue;
       }
       const evidence = gapEvidence(mask, windowMask, width, height, axis, weightedLine, wallEnd, segment.from, thickness, footprint);
@@ -957,6 +1144,7 @@ function buildWalls(
         totalWeight += weight;
         wallEnd = segment.to;
         thickness = Math.max(thickness, segment.thickness);
+        hasHeavySegment = hasHeavySegment || segment.weight !== "light";
       } else {
         finish();
         wallStart = segment.from;
@@ -965,6 +1153,7 @@ function buildWalls(
         totalWeight = segment.to - segment.from + 1;
         thickness = segment.thickness;
         openings = [];
+        hasHeavySegment = segment.weight !== "light";
       }
     }
     finish();
@@ -1532,16 +1721,29 @@ function detectStairs(
   return unique.slice(0, 2).map((stair, index) => ({ ...stair, id: `stair-${index + 1}` }));
 }
 
-function estimateRoomCount(walls: DetectedWall[], footprint: Bounds) {
-  if (walls.length < 4) return 0;
+/**
+ * Rooms are a topology estimate, not semantic recognition: walls are
+ * rasterized onto a grid, the outer border is closed, and flood fill finds
+ * enclosed empty components. An opening never closes a gap in the wall
+ * rasterization, so a doorway does not merge two rooms into one. Each room's
+ * shape is reported as the bounding box of its cells rather than a traced
+ * outline: exact for the rectangular rooms typical of a residential plan,
+ * an overestimate for an L-shaped one.
+ */
+function detectRooms(walls: DetectedWall[], footprint: Bounds): DetectedRoom[] {
+  if (walls.length < 4) return [];
   const gridSize = 72;
   const grid = new Uint8Array(gridSize * gridSize);
   const spanX = Math.max(1, footprint.maxX - footprint.minX);
   const spanY = Math.max(1, footprint.maxY - footprint.minY);
-  const point = (x: number, y: number) => [
+  const toGrid = (x: number, y: number) => [
     clamp(Math.round(((x - footprint.minX) / spanX) * (gridSize - 5)) + 2, 0, gridSize - 1),
     clamp(Math.round(((y - footprint.minY) / spanY) * (gridSize - 5)) + 2, 0, gridSize - 1),
   ] as const;
+  const toPixel = (gx: number, gy: number): [number, number] => [
+    footprint.minX + ((gx - 2) / (gridSize - 5)) * spanX,
+    footprint.minY + ((gy - 2) / (gridSize - 5)) * spanY,
+  ];
   const mark = (x: number, y: number, radius = 1) => {
     for (let oy = -radius; oy <= radius; oy += 1) {
       for (let ox = -radius; ox <= radius; ox += 1) {
@@ -1553,8 +1755,8 @@ function estimateRoomCount(walls: DetectedWall[], footprint: Bounds) {
   };
 
   walls.forEach((wall) => {
-    const [x1, y1] = point(...wall.start);
-    const [x2, y2] = point(...wall.end);
+    const [x1, y1] = toGrid(...wall.start);
+    const [x2, y2] = toGrid(...wall.end);
     const steps = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1), 1);
     for (let step = 0; step <= steps; step += 1) {
       mark(Math.round(x1 + ((x2 - x1) * step) / steps), Math.round(y1 + ((y2 - y1) * step) / steps));
@@ -1568,7 +1770,7 @@ function estimateRoomCount(walls: DetectedWall[], footprint: Bounds) {
   }
 
   const visited = new Uint8Array(grid.length);
-  let rooms = 0;
+  const rooms: DetectedRoom[] = [];
   for (let y = 3; y < gridSize - 3; y += 1) {
     for (let x = 3; x < gridSize - 3; x += 1) {
       const start = y * gridSize + x;
@@ -1576,9 +1778,17 @@ function estimateRoomCount(walls: DetectedWall[], footprint: Bounds) {
       const queue: Array<[number, number]> = [[x, y]];
       visited[start] = 1;
       let cells = 0;
+      let minX = x;
+      let minY = y;
+      let maxX = x;
+      let maxY = y;
       for (let cursor = 0; cursor < queue.length; cursor += 1) {
         const [cx, cy] = queue[cursor];
         cells += 1;
+        minX = Math.min(minX, cx);
+        minY = Math.min(minY, cy);
+        maxX = Math.max(maxX, cx);
+        maxY = Math.max(maxY, cy);
         [[-1, 0], [1, 0], [0, -1], [0, 1]].forEach(([ox, oy]) => {
           const nx = cx + ox;
           const ny = cy + oy;
@@ -1589,10 +1799,19 @@ function estimateRoomCount(walls: DetectedWall[], footprint: Bounds) {
           queue.push([nx, ny]);
         });
       }
-      if (cells >= gridSize * gridSize * 0.012) rooms += 1;
+      if (cells < gridSize * gridSize * 0.012) continue;
+      const [px1, py1] = toPixel(minX, minY);
+      const [px2, py2] = toPixel(maxX + 1, maxY + 1);
+      rooms.push({
+        id: `room-${rooms.length + 1}`,
+        polygon: [[px1, py1], [px2, py1], [px2, py2], [px1, py2]],
+        areaPx: (px2 - px1) * (py2 - py1),
+        confidence: clamp(0.55 + Math.min(0.3, cells / (gridSize * gridSize) * 3), 0.55, 0.85),
+      });
+      if (rooms.length >= 20) return rooms;
     }
   }
-  return clamp(rooms, 1, 20);
+  return rooms;
 }
 
 export function inspectStructureEvidence(
@@ -1654,7 +1873,37 @@ export function inspectStructureEvidence(
     && segment.thickness <= minimumDimension * 0.095
   ));
   const structural = structuralSegments(wallSegments, minimumDimension, wallThickness);
-  return { bounds, threshold, strongMask, mediumMask, windowMask, rawSegments, wallThickness, structural, minimumDimension, minimumRun };
+
+  // A second, fainter tier catches thin partitions that never reach the
+  // strong-mask threshold at all. It is only a candidate pool here: the
+  // anchoring rule that turns a candidate into a wall runs once the
+  // footprint is known, in detectFloorStructureAligned.
+  const mediumHorizontalComponents = maskComponents(
+    markLongRuns(mediumMask, width, height, bounds, "horizontal", minimumRun),
+    width,
+    height,
+    bounds,
+    "horizontal",
+  );
+  const mediumVerticalComponents = maskComponents(
+    markLongRuns(mediumMask, width, height, bounds, "vertical", minimumRun),
+    width,
+    height,
+    bounds,
+    "vertical",
+  );
+  const mediumCandidates = mergeOverlaps([
+    ...splitByStrokeSupport(mediumHorizontalComponents, mediumMask, width, height, minimumRun),
+    ...splitByStrokeSupport(mediumVerticalComponents, mediumMask, width, height, minimumRun),
+  ]).filter((segment) => (
+    segment.to - segment.from >= minimumRun
+    && segment.thickness >= 1
+    && segment.thickness <= Math.max(3, wallThickness * 0.62)
+    && !isDimensionAnnotation(mediumMask, width, height, segment)
+  ));
+  const lightWallThickness = clamp(weightedPercentile(mediumCandidates, 0.6), 1, Math.max(1, wallThickness * 0.5));
+
+  return { bounds, threshold, strongMask, mediumMask, windowMask, rawSegments, wallThickness, lightWallThickness, structural, mediumCandidates, minimumDimension, minimumRun };
 }
 
 function detectFloorStructureAligned(
@@ -1663,10 +1912,16 @@ function detectFloorStructureAligned(
   height: number,
   region: SourceRegion,
 ): DetectedStructure {
-  const { bounds, threshold, strongMask, mediumMask, windowMask, rawSegments, wallThickness, structural, minimumDimension, minimumRun } = inspectStructureEvidence(pixels, width, height, region);
+  const { bounds, threshold, strongMask, mediumMask, windowMask, rawSegments, wallThickness, lightWallThickness, structural, mediumCandidates, minimumDimension, minimumRun } = inspectStructureEvidence(pixels, width, height, region);
   const thickCore = structural.filter((segment) => segment.thickness >= wallThickness * 0.62 || segment.to - segment.from >= minimumDimension * 0.3);
   const footprintBounds = segmentBounds(thickCore.length ? thickCore : structural, bounds);
-  const anchoredStructural = recoverWallAnchors(structural, strongMask, width, height, footprintBounds, wallThickness);
+  const anchorTolerance = Math.max(3, wallThickness * 0.75);
+  const lightStructural = lightStructuralSegments(mediumCandidates, structural, minimumDimension, footprintBounds, anchorTolerance);
+  const anchoredHeavy = recoverWallAnchors(structural, strongMask, width, height, footprintBounds, wallThickness, "heavy");
+  const anchoredLight = lightStructural.length
+    ? recoverWallAnchors(lightStructural, mediumMask, width, height, footprintBounds, lightWallThickness, "light")
+    : [];
+  const anchoredStructural = [...anchoredHeavy, ...anchoredLight];
   const outdoorAreas = detectOutdoorAreas(rawSegments, footprintBounds, wallThickness);
   const walls = recoverEmbeddedOpenings(
     trimUnsupportedInteriorWallTails(
@@ -1702,6 +1957,7 @@ function detectFloorStructureAligned(
     0.94,
   );
 
+  const rooms = detectRooms(walls, footprintBounds);
   return {
     regionId: region.id,
     sourceWidth: width,
@@ -1709,13 +1965,14 @@ function detectFloorStructureAligned(
     walls,
     outdoorAreas,
     stairs,
+    rooms,
     footprint: {
       x: footprintBounds.minX,
       y: footprintBounds.minY,
       width: Math.max(1, footprintBounds.maxX - footprintBounds.minX),
       height: Math.max(1, footprintBounds.maxY - footprintBounds.minY),
     },
-    roomCount: estimateRoomCount(walls, footprintBounds),
+    roomCount: rooms.length,
     confidence,
     diagnostics: {
       threshold,
@@ -1825,15 +2082,61 @@ export function alignAdjacentStairStructures(
   return aligned;
 }
 
+/** Representative clear width of a Danish residential interior door, used to
+ * calibrate real-world scale from detected door openings when no dimension
+ * text has been read. This is a provisional estimate, not a measurement: it
+ * is only used when no user measurement or read dimension is available. */
+const REFERENCE_DOOR_WIDTH_METRES = 0.89;
+
+export type ProjectScale = {
+  metresPerPixel: number;
+  source: "door-width" | "user" | "provisional";
+  confidence: number;
+};
+
+/**
+ * Estimate one shared pixel-to-metre ratio for the whole project from the
+ * median width of symbol-confirmed door openings, calibrated against a
+ * representative Danish interior door. This is deliberately a single
+ * estimate shared by every level: two floors of the same building must use
+ * the same scale, which the previous per-level "10 metres wide" heuristic
+ * did not guarantee.
+ */
+export function resolveScaleFromDoors(structures: Record<string, DetectedStructure>): ProjectScale | null {
+  const doorWidths = Object.values(structures)
+    .flatMap((structure) => structure.walls.flatMap((wall) => wall.openings))
+    .filter((opening) => opening.kind === "door" && opening.evidence === "symbol")
+    .map((opening) => opening.width)
+    .filter((width) => width >= 12 && width <= 90)
+    .sort((a, b) => a - b);
+  if (doorWidths.length < 2) return null;
+  const medianWidth = doorWidths[Math.floor(doorWidths.length / 2)];
+  const metresPerPixel = REFERENCE_DOOR_WIDTH_METRES / medianWidth;
+
+  const plausible = Object.values(structures).every((structure) => {
+    const widthMetres = structure.footprint.width * metresPerPixel;
+    const heightMetres = structure.footprint.height * metresPerPixel;
+    return widthMetres >= 2.5 && widthMetres <= 40 && heightMetres >= 2.5 && heightMetres <= 40;
+  });
+  if (!plausible) return null;
+
+  return {
+    metresPerPixel,
+    source: "door-width",
+    confidence: clamp(0.4 + Math.min(0.3, doorWidths.length * 0.05), 0.4, 0.7),
+  };
+}
+
 export function structureToLevel(
   structure: DetectedStructure,
   region: SourceRegion,
   index: number,
+  sharedScale?: ProjectScale,
 ): Level {
   const footprint = structure.footprint;
-  const sceneWidth = 10;
-  const pixelsToMetres = sceneWidth / Math.max(1, footprint.width);
-  const sceneDepth = clamp(footprint.height * pixelsToMetres, 4.2, 15);
+  const pixelsToMetres = sharedScale ? sharedScale.metresPerPixel : 10 / Math.max(1, footprint.width);
+  const sceneWidth = sharedScale ? footprint.width * pixelsToMetres : 10;
+  const sceneDepth = sharedScale ? footprint.height * pixelsToMetres : clamp(footprint.height * pixelsToMetres, 4.2, 15);
   const centerX = footprint.x + footprint.width / 2;
   const centerY = footprint.y + footprint.height / 2;
   const toScene = ([x, y]: [number, number]): [number, number] => [
@@ -1871,9 +2174,10 @@ export function structureToLevel(
       id: `${region.id}-${wall.id}`,
       start,
       end,
-      thickness: clamp(wall.thickness * pixelsToMetres, 0.1, 0.42),
+      thickness: clamp(wall.thickness * pixelsToMetres, wall.weight === "light" ? 0.05 : 0.1, 0.42),
       openings,
       confidence: wall.confidence,
+      weight: wall.weight,
     };
   }).filter((wall) => Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1]) > 0.05);
 
@@ -1927,6 +2231,12 @@ export function structureToLevel(
     stepCount: stair.stepCount,
     confidence: stair.confidence,
   }));
+  const rooms: Room[] = structure.rooms.map((room) => ({
+    id: room.id,
+    polygon: room.polygon.map(toScene),
+    area: Number((room.areaPx * pixelsToMetres * pixelsToMetres).toFixed(1)),
+    confidence: room.confidence,
+  }));
 
   return {
     id: region.id,
@@ -1938,11 +2248,12 @@ export function structureToLevel(
     roomCount: structure.roomCount,
     wallCount: walls.length,
     openingCount: walls.reduce((sum, wall) => sum + (wall.openings?.length ?? 0), 0),
-    scaleStatus: "needed",
+    scaleStatus: sharedScale ? "resolved" : "needed",
     slab: { width: sceneWidth, depth: sceneDepth, x: 0, z: 0 },
     walls,
     outdoorAreas,
     stairs,
+    rooms,
     floorTextureUrl: structure.floorTextureUrl,
     detectionConfidence: structure.confidence,
     source: "detected",

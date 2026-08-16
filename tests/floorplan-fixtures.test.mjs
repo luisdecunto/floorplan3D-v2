@@ -99,6 +99,12 @@ if (!manifest) {
         })[0];
         assert.equal(balconyAccess?.kind, "door", "the central balcony access symbol should become a door, not a window");
         assert.equal(balconyAccess?.evidence, "symbol", "the balcony door must be supported by its leaf and swing arc, not its position");
+        const balconySideOpenings = balconyWall.openings.filter((opening) => opening !== balconyAccess);
+        assert.equal(balconySideOpenings.length, 2, "the balcony facade should have exactly two side openings besides the door");
+        assert.ok(
+          balconySideOpenings.every((opening) => opening.kind === "window"),
+          "the balcony facade's two side gaps are glazing lines, not dimension-line leaves, and must classify as windows",
+        );
         const bedroomDoorWall = topPlan.walls.find((wall) => {
           const normalizedX = (wall.start[0] - topPlan.footprint.x) / topPlan.footprint.width;
           return wall.axis === "vertical"

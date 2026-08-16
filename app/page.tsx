@@ -31,7 +31,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { ChangeEvent, lazy, ReactNode, Suspense, useEffect, useRef, useState } from "react";
+import { ChangeEvent, lazy, ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   detectPlanRegions,
   LEVEL_NAME_OPTIONS,
@@ -48,6 +48,7 @@ import {
   documentStructures,
   realignDocumentStairs,
   removeDocumentWall,
+  setDocumentScale,
   suggestBuildingOrder,
   undoLastDocumentEdit,
   type FloorplanDocumentV2,
@@ -56,8 +57,10 @@ import { downloadProject, loadLatestProjectLocally, parseProject, saveProjectLoc
 import {
   alignAdjacentStairStructures,
   detectFloorStructures,
+  resolveScaleFromDoors,
   structureToLevel,
   type DetectedStructure,
+  type ProjectScale,
 } from "./structure-detector";
 
 const TwinViewer = lazy(() => import("./twin-viewer"));
@@ -143,10 +146,30 @@ async function inspectFloorplan(url: string): Promise<{ regions: SourceRegion[];
   }
 }
 
-function buildPreviewLevels(regions: SourceRegion[], structures: StructureMap): Level[] {
+function scaleLabel(scale: ProjectScale | undefined) {
+  if (!scale || scale.source === "provisional") return "Measurement needed";
+  if (scale.source === "user") return "Resolved (measured)";
+  return "Estimated (door width)";
+}
+
+function scaleHeadline(scale: ProjectScale | undefined) {
+  if (!scale || scale.source === "provisional") return "One measurement needed";
+  if (scale.source === "user") return "Scale verified";
+  return "Scale estimated from doors";
+}
+
+function scaleCopy(scale: ProjectScale | undefined, hasSelectedWall: boolean) {
+  if (!scale || scale.source === "provisional") return "Select a wall, then Measure and enter its real length.";
+  if (scale.source === "user") return "Dimensions use your measured wall length.";
+  return hasSelectedWall
+    ? "Dimensions are estimated from typical door widths. Press Measure to enter this wall's real length instead."
+    : "Dimensions are estimated from typical door widths, not measured. Select a wall to enter a real length instead.";
+}
+
+function buildPreviewLevels(regions: SourceRegion[], structures: StructureMap, sharedScale?: ProjectScale): Level[] {
   return regions.map((region, index) => {
     const detected = structures[region.id];
-    if (detected?.walls.length >= 3) return structureToLevel(detected, region, index);
+    if (detected?.walls.length >= 3) return structureToLevel(detected, region, index, sharedScale);
     const template = sampleLevels[Math.min(index, sampleLevels.length - 1)];
     return {
       ...template,
@@ -200,9 +223,29 @@ export default function Home() {
     return () => window.clearTimeout(timeout);
   }, [document]);
 
-  const previewLevels = buildPreviewLevels(regions, structures);
+  const doorScale = useMemo(() => resolveScaleFromDoors(structures) ?? undefined, [structures]);
+  const sharedScale = document?.scale.source === "user" ? document.scale : doorScale;
+  const previewLevels = buildPreviewLevels(regions, structures, sharedScale);
   const selectedRegion = regions.find((region) => region.id === activeLevel) ?? regions[0];
   const selectedLevel = previewLevels.find((level) => level.id === activeLevel) ?? previewLevels[0] ?? sampleLevels[0];
+
+  function measureScale() {
+    if (!document) return;
+    const wall = structures[activeLevel]?.walls.find((candidate) => candidate.id === selectedWallId);
+    if (!wall) {
+      setProjectMessage("Select a wall first, then Measure to enter its real length.");
+      return;
+    }
+    const pixelLength = Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1]);
+    const input = window.prompt("Real length of the selected wall, in metres:");
+    const metres = input ? Number.parseFloat(input) : NaN;
+    if (!Number.isFinite(metres) || metres <= 0 || metres > 40) {
+      setProjectMessage("Enter a wall length between 0 and 40 metres.");
+      return;
+    }
+    setDocument(setDocumentScale(document, metres / pixelLength));
+    setProjectMessage("Scale updated from your measurement.");
+  }
 
   function chooseFile(event: ChangeEvent<HTMLInputElement>) {
     const nextFile = event.target.files?.[0];
@@ -439,6 +482,7 @@ export default function Home() {
         document={document}
         exploded={exploded}
         imageUrl={imageUrl}
+        measureScale={measureScale}
         mobilePanel={mobilePanel}
         moveLevel={moveLevel}
         previewLevels={previewLevels}
@@ -560,6 +604,7 @@ function Workspace({
   document,
   exploded,
   imageUrl,
+  measureScale,
   mobilePanel,
   moveLevel,
   previewLevels,
@@ -595,6 +640,7 @@ function Workspace({
   document: FloorplanDocumentV2 | null;
   exploded: boolean;
   imageUrl: string | null;
+  measureScale: () => void;
   mobilePanel: "levels" | "canvas" | "details";
   moveLevel: (id: string, offset: -1 | 1) => void;
   previewLevels: Level[];
@@ -841,13 +887,13 @@ function Workspace({
             <span className="detail-label">Dimensions</span>
             <DetailRow label="Floor area" value={`${selectedLevel.area.toFixed(1)} m²`} />
             <DetailRow label="Ceiling" value={`${selectedLevel.ceilingHeight.toFixed(2)} m`} />
-            <DetailRow label="Scale" value={selectedLevel.scaleStatus === "resolved" ? "Resolved" : "Measurement needed"} warning={selectedLevel.scaleStatus === "needed"} />
+            <DetailRow label="Scale" value={scaleLabel(document?.scale)} warning={(document?.scale.source ?? "provisional") !== "user"} />
           </div>
 
           <div className="attention-card">
             <span className="attention-icon"><Ruler size={18} /></span>
-            <div><strong>{selectedLevel.source === "detected" ? "Multi-pass structure" : selectedLevel.scaleStatus === "resolved" ? "Scale verified" : "One measurement needed"}</strong><p>{selectedLevel.source === "detected" ? "Thick strokes, wall topology and opening evidence are cross-checked before geometry is accepted." : selectedLevel.scaleStatus === "resolved" ? "Dimensions agree across this floor." : "Draw a line across a known wall and enter its length."}</p></div>
-            <button>{selectedLevel.scaleStatus === "resolved" ? "Review" : "Measure"}</button>
+            <div><strong>{scaleHeadline(document?.scale)}</strong><p>{scaleCopy(document?.scale, Boolean(selectedWall))}</p></div>
+            <button onClick={measureScale}>{document?.scale.source === "user" ? "Remeasure" : "Measure"}</button>
           </div>
 
           <div className="detail-footer">

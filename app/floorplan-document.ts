@@ -2,8 +2,10 @@ import { resequenceRegions, type SourceRegion } from "./plan-regions.ts";
 import type { Level } from "./scene-data";
 import {
   alignAdjacentStairStructures,
+  resolveScaleFromDoors,
   structureToLevel,
   type DetectedStructure,
+  type ProjectScale,
 } from "./structure-detector.ts";
 
 export const FLOORPLAN_SCHEMA_VERSION = 2 as const;
@@ -29,7 +31,18 @@ export type ReviewIssue = {
 export type FloorplanEdit = {
   id: string;
   levelId: string;
-  kind: "remove-wall" | "restore-wall" | "add-opening" | "rename-level" | "set-outdoor-area" | "align-stairs";
+  kind:
+    | "remove-wall"
+    | "restore-wall"
+    | "add-opening"
+    | "remove-opening"
+    | "move-opening"
+    | "resize-opening"
+    | "set-opening-kind"
+    | "rename-level"
+    | "set-outdoor-area"
+    | "align-stairs"
+    | "set-scale";
   entityId?: string;
   createdAt: string;
   before?: unknown;
@@ -68,6 +81,7 @@ export type FloorplanDocumentV2 = {
   levels: FloorplanLevelV2[];
   issues: ReviewIssue[];
   edits: FloorplanEdit[];
+  scale: ProjectScale;
 };
 
 /**
@@ -93,7 +107,7 @@ function identifier(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function buildIssues(levels: FloorplanLevelV2[]): ReviewIssue[] {
+function buildIssues(levels: FloorplanLevelV2[], scale: ProjectScale): ReviewIssue[] {
   const issues: ReviewIssue[] = [];
   if (levels.length > 1 && levels.every((level) => !level.sourceRegion.nameEdited)) {
     issues.push({
@@ -136,16 +150,32 @@ function buildIssues(levels: FloorplanLevelV2[]): ReviewIssue[] {
         resolved: false,
       });
     }
-    issues.push({
-      id: `scale-${level.id}`,
-      levelId: level.id,
+  });
+  const scaleIssue = levels[0] ? buildScaleIssue(scale, levels[0].id) : null;
+  if (scaleIssue) issues.push(scaleIssue);
+  return issues;
+}
+
+function buildScaleIssue(scale: ProjectScale, firstLevelId: string): ReviewIssue | null {
+  if (scale.source === "user") return null;
+  if (scale.source === "door-width") {
+    return {
+      id: "scale-door-width",
+      levelId: firstLevelId,
       severity: "info",
       code: "scale-needed",
-      message: "Add one known measurement to resolve real-world scale.",
+      message: "Scale is estimated from detected door widths, not measured. Add a known measurement to replace it.",
       resolved: false,
-    });
-  });
-  return issues;
+    };
+  }
+  return {
+    id: "scale-provisional",
+    levelId: firstLevelId,
+    severity: "warning",
+    code: "scale-needed",
+    message: "Add one known measurement to resolve real-world scale.",
+    resolved: false,
+  };
 }
 
 export function createFloorplanDocumentV2({
@@ -178,6 +208,11 @@ export function createFloorplanDocumentV2({
     provenance: ["geometry", "topology"] as DetectionProvenance[],
     confirmed: false,
   })).filter((level) => Boolean(level.structure));
+  const scale: ProjectScale = resolveScaleFromDoors(aligned) ?? {
+    metresPerPixel: 0,
+    source: "provisional",
+    confidence: 0,
+  };
   return {
     schemaVersion: FLOORPLAN_SCHEMA_VERSION,
     id: identifier("project"),
@@ -187,8 +222,9 @@ export function createFloorplanDocumentV2({
     model: { version: "v2-geometry-bootstrap", runtime: "geometry-fallback" },
     source: { name, mimeType, width, height, previewDataUrl },
     levels,
-    issues: buildIssues(levels),
+    issues: buildIssues(levels, scale),
     edits: [],
+    scale,
   };
 }
 
@@ -203,9 +239,32 @@ export function documentStructures(document: FloorplanDocumentV2) {
 }
 
 export function documentSceneLevels(document: FloorplanDocumentV2): Level[] {
+  const sharedScale = document.scale.source === "provisional" ? undefined : document.scale;
   return [...document.levels]
     .sort((a, b) => a.order - b.order)
-    .map((level, index) => structureToLevel(level.structure, { ...level.sourceRegion, name: level.name }, index));
+    .map((level, index) => structureToLevel(level.structure, { ...level.sourceRegion, name: level.name }, index, sharedScale));
+}
+
+/** Records an explicit user measurement, which always outranks the
+ * door-width estimate or the provisional per-level fallback. */
+export function setDocumentScale(document: FloorplanDocumentV2, metresPerPixel: number): FloorplanDocumentV2 {
+  const before = document.scale;
+  const after: ProjectScale = { metresPerPixel, source: "user", confidence: 1 };
+  const now = new Date().toISOString();
+  return {
+    ...document,
+    scale: after,
+    updatedAt: now,
+    issues: document.issues.filter((issue) => issue.code !== "scale-needed"),
+    edits: [...document.edits, {
+      id: identifier("edit"),
+      levelId: document.levels[0]?.id ?? "building",
+      kind: "set-scale" as const,
+      createdAt: now,
+      before,
+      after,
+    }],
+  };
 }
 
 export function updateDocumentLevel(
@@ -258,6 +317,49 @@ export function addDocumentOpening(
   }), { kind: "add-opening", entityId: wallId, before, after });
 }
 
+function updateOpening(
+  document: FloorplanDocumentV2,
+  levelId: string,
+  wallId: string,
+  openingIndex: number,
+  kind: FloorplanEdit["kind"],
+  transform: (opening: DetectedStructure["walls"][number]["openings"][number]) => DetectedStructure["walls"][number]["openings"][number] | null,
+) {
+  const level = document.levels.find((candidate) => candidate.id === levelId);
+  const wall = level?.structure.walls.find((candidate) => candidate.id === wallId);
+  const opening = wall?.openings[openingIndex];
+  if (!level || !wall || !opening) return document;
+  const before = [...wall.openings];
+  const transformed = transform(opening);
+  const after = transformed
+    ? wall.openings.map((candidate, index) => index === openingIndex ? transformed : candidate)
+    : wall.openings.filter((_, index) => index !== openingIndex);
+  return updateDocumentLevel(document, levelId, (current) => ({
+    ...current,
+    confirmed: false,
+    structure: {
+      ...current.structure,
+      walls: current.structure.walls.map((candidate) => candidate.id === wallId ? { ...candidate, openings: after } : candidate),
+    },
+  }), { kind, entityId: wallId, before, after });
+}
+
+export function removeDocumentOpening(document: FloorplanDocumentV2, levelId: string, wallId: string, openingIndex: number) {
+  return updateOpening(document, levelId, wallId, openingIndex, "remove-opening", () => null);
+}
+
+export function moveDocumentOpening(document: FloorplanDocumentV2, levelId: string, wallId: string, openingIndex: number, offset: number) {
+  return updateOpening(document, levelId, wallId, openingIndex, "move-opening", (opening) => ({ ...opening, offset: Math.max(0, offset) }));
+}
+
+export function resizeDocumentOpening(document: FloorplanDocumentV2, levelId: string, wallId: string, openingIndex: number, width: number) {
+  return updateOpening(document, levelId, wallId, openingIndex, "resize-opening", (opening) => ({ ...opening, width: Math.max(4, width) }));
+}
+
+export function setDocumentOpeningKind(document: FloorplanDocumentV2, levelId: string, wallId: string, openingIndex: number, kind: "door" | "window") {
+  return updateOpening(document, levelId, wallId, openingIndex, "set-opening-kind", (opening) => ({ ...opening, kind }));
+}
+
 export function undoLastDocumentEdit(document: FloorplanDocumentV2) {
   const edit = document.edits.at(-1);
   if (!edit) return document;
@@ -268,7 +370,11 @@ export function undoLastDocumentEdit(document: FloorplanDocumentV2) {
     }));
     return { ...restored, edits: document.edits.slice(0, -1) };
   }
-  if (edit.kind === "add-opening" && Array.isArray(edit.before) && edit.entityId) {
+  if (
+    (edit.kind === "add-opening" || edit.kind === "remove-opening" || edit.kind === "move-opening" || edit.kind === "resize-opening" || edit.kind === "set-opening-kind")
+    && Array.isArray(edit.before)
+    && edit.entityId
+  ) {
     const restored = updateDocumentLevel(document, edit.levelId, (level) => ({
       ...level,
       structure: {
@@ -280,6 +386,14 @@ export function undoLastDocumentEdit(document: FloorplanDocumentV2) {
       },
     }));
     return { ...restored, edits: document.edits.slice(0, -1) };
+  }
+  if (edit.kind === "set-scale" && edit.before) {
+    return {
+      ...document,
+      scale: edit.before as ProjectScale,
+      edits: document.edits.slice(0, -1),
+      updatedAt: new Date().toISOString(),
+    };
   }
   return { ...document, edits: document.edits.slice(0, -1), updatedAt: new Date().toISOString() };
 }
@@ -308,6 +422,11 @@ export function validateFloorplanDocument(value: unknown): FloorplanDocumentV2 {
   if (!Array.isArray(candidate.levels) || candidate.levels.length === 0) throw new Error("The project contains no levels.");
   if (!candidate.source || !candidate.model || !Array.isArray(candidate.edits) || !Array.isArray(candidate.issues)) {
     throw new Error("The project is incomplete.");
+  }
+  // Projects saved before scale calibration was added have no scale field;
+  // treat them as provisional rather than refusing to open them.
+  if (!candidate.scale) {
+    candidate.scale = { metresPerPixel: 0, source: "provisional", confidence: 0 };
   }
   return candidate as FloorplanDocumentV2;
 }

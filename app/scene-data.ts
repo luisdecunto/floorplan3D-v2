@@ -15,6 +15,7 @@ export type Wall = {
   height?: number;
   openings?: Opening[];
   confidence?: number;
+  weight?: "heavy" | "light";
 };
 
 export type OutdoorArea = {
@@ -24,6 +25,14 @@ export type OutdoorArea = {
   width: number;
   depth: number;
   side: "top" | "right" | "bottom" | "left";
+  confidence: number;
+};
+
+export type Room = {
+  id: string;
+  name?: string;
+  polygon: [number, number][];
+  area: number;
   confidence: number;
 };
 
@@ -53,6 +62,7 @@ export type Level = {
   walls: Wall[];
   outdoorAreas?: OutdoorArea[];
   stairs?: Stair[];
+  rooms?: Room[];
   floorTextureUrl?: string;
   detectionConfidence?: number;
   source?: "sample" | "detected";

@@ -2,7 +2,7 @@
 
 **Implementation covered:** `v2-geometry-bootstrap`  
 **Runtime:** browser-based `geometry-fallback`  
-**Report date:** 15 August 2026
+**Report date:** 16 August 2026
 
 ## 1. Purpose and scope
 
@@ -152,6 +152,16 @@ Thin annotations can be collinear with a real wall. The detector therefore measu
 
 This prevents a dimension line from becoming the false wall between the living room and kitchen, while avoiding broad deletion of legitimate faint walls.
 
+### Light-tier partitions
+
+The rules above describe the **heavy tier**, built from the strong-threshold mask. Many drawings use a visibly thinner line weight for interior partitions than for exterior walls; a single global thickness threshold sized for the heavy tier can reject those partitions outright before density or length rules ever run.
+
+A second **light tier** is extracted from the fainter medium mask and validated by a different rule: instead of length and density alone, a light candidate must be topologically *anchored* — both of its endpoints must terminate at an already-accepted wall (heavy or light) or at the footprint edge, within a small tolerance. This runs in several passes so a chain of thin partitions can bootstrap off one heavy wall or footprint edge, one T-junction at a time. Furniture and text strokes normally fail this test because they do not terminate at a perpendicular structural line.
+
+Before a light candidate is even considered, it is checked against dimension-chain evidence: a thin, near-solid straight run that carries a short perpendicular witness tick somewhere in its *middle* — not just at its two ends, the way a real wall's T or L junctions do — is rejected as an annotation rather than admitted as a wall. Without this check, a dimension line spanning wall-to-wall satisfies the same endpoint-anchoring rule a real partition would.
+
+Every detected wall carries a `weight` of `heavy` or `light`, which the 3D viewer uses to render partitions thinner than load-bearing walls.
+
 ## 7. Doors and windows
 
 Openings start as bounded gaps between collinear structural wall sections. Classification then uses evidence inside and around the gap.
@@ -184,9 +194,15 @@ The detected opening records its evidence source:
 
 The balcony-center exception has been removed. An opening does not become a door merely because it is close to the middle of a balcony. The validation plan has an automated regression assertion requiring its balcony door to carry `symbol` evidence.
 
-### Windows
+### Window symbol recognition
 
-Window evidence is based primarily on one or more thin lines running parallel to a gap in an exterior wall. Strong parallel support on a façade is classified as a window. Interior-wall gaps are biased away from windows because windows are uncommon inside ordinary residential partitions.
+A drawn window is normally two, sometimes three, parallel glazing lines running the full width of the gap, close to the wall face. A door's swing arc can pass through the same fainter mask used for window evidence, but a curve only crosses any single offset from the wall briefly, while true glazing lines hold a near-solid density at a fixed offset across almost the entire gap.
+
+The detector samples density at every offset out to about 2.5× the wall thickness on each side of the gap and looks for two near-solid peaks (density ≥ 0.82) a plausible glazing separation apart. When found on an exterior wall, this is decisive window evidence and overrides a marginal door-symbol reading, unless the door score is itself almost certain. This is what keeps a real swing door — whose arc never forms that tight parallel pair — safe, while reclassifying glazing lines that a cruder "any dark pixels near the gap" check had previously read as low-confidence doors.
+
+### Windows (parallel-line fallback)
+
+Window evidence is also based on one or more thin lines running parallel to a gap in an exterior wall, using a wider and less specific search than the symbol test above. Strong parallel support on a façade is classified as a window. Interior-wall gaps are biased away from windows because windows are uncommon inside ordinary residential partitions, and closet shelving can draw a similar parallel pair.
 
 ### Fallback behavior
 
@@ -248,7 +264,9 @@ The final upper tread is constrained to meet the upper slab edge. Both flights a
 
 ## 10. Room estimation and confidence
 
-Room count is a topology estimate, not semantic room recognition. Walls are rasterized onto a 72 × 72 grid, the outer border is closed, and flood fill counts sufficiently large enclosed empty components. Tiny enclosed artifacts are ignored.
+Rooms are a topology estimate, not semantic room recognition. Walls are rasterized onto a 72 × 72 grid, the outer border is closed, and flood fill finds sufficiently large enclosed empty components. An opening never closes the wall rasterization, so a doorway does not merge two rooms into one. Tiny enclosed artifacts are ignored.
+
+Each enclosed component is reported as a room entity with the bounding box of its cells as its shape. This is exact for the rectangular rooms typical of a residential plan; an L-shaped room is reported as a box that extends past its true footprint, since the analyser does not yet trace an exact rectilinear outline. Room count is `rooms.length`.
 
 The overall structure confidence starts from a base score and gains support from:
 
@@ -266,19 +284,25 @@ Confidence is evidence strength, not a statistical probability calibrated on a l
 
 The canonical project stores walls and openings, not prebuilt meshes. Meshes are derived when the viewer renders.
 
-### Current provisional scale
+### Scale resolution hierarchy
 
-Without one known measurement, the model cannot know absolute real-world scale. The current conversion uses:
+Every level in a project shares one project-wide `metresPerPixel` ratio: two floors of the same building are the same physical size, so they must not be scaled independently. Scale is resolved in order:
 
-- scene width: 10 metres per level;
-- scene depth: source aspect ratio, constrained to 4.2–15 metres;
+1. **User measurement.** The user selects a detected wall, presses Measure, and enters its real length. This always wins and is recorded as `source: "user"` with full confidence.
+2. **Door-width estimate.** When at least two symbol-confirmed door openings exist, the analyser takes their median pixel width and calibrates against 0.89 m — a representative Danish interior door clear width — subject to a sanity check that every level's resulting footprint falls between 2.5 m and 40 m per side. This is recorded as `source: "door-width"` at moderate confidence (0.4–0.7) and is always presented as an estimate, never as a measurement.
+3. **Provisional fallback.** When neither is available, each level is independently scaled to a nominal 10-metre width, exactly as before. This keeps the model navigable but is not comparable across levels and is recorded as `source: "provisional"`.
+
+Reading the dimension text itself (OCR) is not yet implemented; the dimension-chain detection added to reject false walls (§6) and false door/window evidence intentionally recognizes chains without reading their digits, so this is the natural next source to slot into the hierarchy above the door-width estimate.
+
+With a resolved scale, the conversion uses:
+
 - floor-to-floor elevation: 3.05 metres;
 - ceiling height: 2.70 metres on the base level and 2.55 metres above;
 - door height: 2.12 metres;
 - window height: 1.30 metres with a 0.90-metre sill;
-- wall thickness: detected pixel thickness converted and constrained to 0.10–0.42 metres.
+- wall thickness: detected pixel thickness converted and constrained to 0.10–0.42 metres for heavy walls, 0.05–0.42 metres for light partitions.
 
-These dimensions make the model navigable and internally consistent, but they are not survey-grade measurements. Every level receives a `scale-needed` issue until scale calibration is implemented.
+Every level still receives a `scale-needed` issue while the scale source is `door-width` or `provisional`, downgraded to informational once a door-width estimate is available, so an estimate is never silently presented as a measurement.
 
 ### Derived geometry
 
@@ -297,7 +321,9 @@ The analyser produces a proposal rather than silently claiming certainty. Curren
 
 - select and remove a detected wall;
 - add a door or window to a selected wall;
-- undo wall removal or opening addition;
+- remove, move, resize, or retype an existing opening;
+- enter a real measurement for a selected wall to resolve project scale;
+- undo the last structural edit;
 - rename and reorder levels;
 - reverse the full level order;
 - expand or shrink a source region;
@@ -305,9 +331,9 @@ The analyser produces a proposal rather than silently claiming certainty. Curren
 - change wall opacity and visible levels;
 - switch between plan review, 3D, and exploded views.
 
-Manual opening addition places a new opening in the middle of the selected wall. Its width is proportional to wall length and differs for doors and windows.
+Manual opening addition places a new opening in the middle of the selected wall. Its width is proportional to wall length and differs for doors and windows. Editing an existing opening's position, width, or door/window kind directly is available as a document-level correction (`move-opening`, `resize-opening`, `set-opening-kind`, `remove-opening`); the plan-review canvas currently exposes this as a wall-and-opening selection flow rather than free-form dragging, which remains a follow-up.
 
-Projects use schema version 2 and keep the source metadata, detected structure, confidence, issues, edit history, and preview. They are saved to the browser's IndexedDB database after a 220 ms debounce. The newest local project can be continued on the same browser and device. Projects can also be exported and imported as `.planform.json` files.
+Projects use schema version 2 and keep the source metadata, detected structure, confidence, issues, edit history, project scale, and preview. They are saved to the browser's IndexedDB database after a 220 ms debounce. The newest local project can be continued on the same browser and device. Projects can also be exported and imported as `.planform.json` files. A project saved before scale calibration was added is treated as provisional scale on load rather than rejected.
 
 Re-analysis is not automatically applied to an already saved project. To use a newer detector version, the user must upload and analyse the source image again. Local browser storage is not cross-device cloud storage.
 
@@ -333,13 +359,14 @@ The main limitations of the current implementation are:
 1. **No trained semantic model.** Detection is classical image geometry and topology, not learned wall, door, furniture, or room segmentation.
 2. **Two dominant directions.** Global plan rotation is supported, but arbitrary diagonal and curved wall networks are not fully vectorized.
 3. **No perspective correction.** Screenshots and flat scans work best; oblique photographs may distort topology.
-4. **No OCR or scale calibration.** Dimension text and room labels are not used to establish scale or semantics.
+4. **No OCR yet.** Dimension text and room labels are not read; scale falls back to a door-width estimate or a provisional per-level default rather than the printed measurement. Digits in a compressed or low-resolution upload can be only a few pixels tall and unreadable in any case.
 5. **Furniture and fixtures remain texture detail.** Tables, cupboards, toilets, sinks, and similar objects are visible on the floor texture but are not separate 3D entities.
 6. **Image-only intake.** The current UI accepts JPEG, PNG, and WebP, not PDF.
-7. **Thin or damaged symbols can be missed.** Compression, blur, overlaid UI, or aggressive downsampling may erase a door arc, balcony rail, or stair tread.
-8. **Room count is approximate.** It is based on enclosed topology and does not know room names or functions.
+7. **Thin or damaged symbols can be missed.** Compression, blur, overlaid UI, or aggressive downsampling may erase a door arc, balcony rail, or stair tread. A non-black or curved exterior wall (a rendered brochure elevation rather than a plain line drawing) is not yet traced at all.
+8. **Room shape is a bounding box.** A rectangular room's box is exact; an L-shaped room's box extends past its true footprint, since the analyser does not yet trace an exact outline.
 9. **Local persistence only.** IndexedDB projects do not automatically appear on another phone or computer.
 10. **Generated stair archetype.** The 3D connection is a reliable half-paced representation for the current validation case, not a complete catalogue of stair types.
+11. **Correction is opening- and wall-selection based, not free-form drawing.** Moving a wall's endpoint or drawing a brand-new wall is not yet supported; the corrections available today are removing/adding/retyping/repositioning openings and removing a wall.
 
 ## 15. Evidence hierarchy and future direction
 
@@ -359,11 +386,13 @@ The next major accuracy step is not adding more case-specific coordinates. It is
 |---|---|
 | Upload, analysis orchestration, review UI | `app/page.tsx` |
 | Multi-floor region separation | `app/plan-regions.ts` |
-| Rotation, walls, openings, balconies, stairs | `app/structure-detector.ts` |
-| Canonical V2 project, issues, edits, undo | `app/floorplan-document.ts` |
+| Rotation, walls (heavy/light tiers), openings, dimension-chain rejection, balconies, stairs, rooms | `app/structure-detector.ts` |
+| Door-width scale estimation | `app/structure-detector.ts` → `resolveScaleFromDoors` |
+| Canonical V2 project, issues, edits, undo, project scale | `app/floorplan-document.ts` |
 | Pixel-to-scene conversion | `app/structure-detector.ts` → `structureToLevel` |
 | Stair opening and half-paced connections | `app/scene-geometry.ts` |
 | Three.js rendering | `app/twin-viewer.tsx` |
 | IndexedDB and JSON import/export | `app/project-storage.ts` |
 | Regression fixtures and structural assertions | `tests/floorplan-fixtures.test.mjs`, `tests/structure-detector.test.mjs` |
+| Ground-truth-free detector benchmark and debug overlay | `tests/benchmark/score.mjs`, `tests/benchmark/render-overlay.mjs` |
 
