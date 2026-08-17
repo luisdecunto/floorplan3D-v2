@@ -16,6 +16,10 @@ export type Wall = {
   openings?: Opening[];
   confidence?: number;
   weight?: "heavy" | "light";
+  /** Local metre offsets [from, to] along the wall run where the wall is a thin
+   *  balustrade rather than a structural element. WallModel skips these spans;
+   *  StairwellTrim renders them as railing instead. */
+  railSpans?: Array<[number, number]>;
 };
 
 export type OutdoorArea = {

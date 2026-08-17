@@ -25,6 +25,10 @@ export type DetectedWall = {
    * partitions recovered from a fainter mask and validated by requiring both
    * endpoints to terminate at another wall or the footprint edge. */
   weight: "heavy" | "light";
+  /** Fractions [0,1] along the wall's run (from start to end) where the wall is
+   *  a thin balustrade rather than structural. Set only on walls adjacent to a
+   *  stairwell opening and only when the profile is genuinely mixed. */
+  railSpans?: Array<[number, number]>;
 };
 
 export type DetectedOutdoorArea = {
@@ -2148,6 +2152,112 @@ export function inspectStructureEvidence(
   return { bounds, threshold, strongMask, mediumMask, windowMask, rawSegments, wallThickness, lightWallThickness, structural, mediumCandidates, minimumDimension, minimumRun };
 }
 
+/** Ink thickness perpendicular to the wall's run at position `p` along the run.
+ *  Samples three adjacent run rows and returns the median count for robustness. */
+function localThicknessAt(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  axis: Axis,
+  line: number,
+  p: number,
+  maxHalf: number,
+): number {
+  const counts: number[] = [];
+  for (let d = -1; d <= 1; d += 1) {
+    let c = 0;
+    for (let off = -maxHalf; off <= maxHalf; off += 1) {
+      const x = axis === "vertical" ? Math.round(line + off) : Math.round(p + d);
+      const y = axis === "vertical" ? Math.round(p + d) : Math.round(line + off);
+      if (x < 0 || x >= width || y < 0 || y >= height) continue;
+      if (mask[y * width + x]) c += 1;
+    }
+    counts.push(c);
+  }
+  counts.sort((a, b) => a - b);
+  return counts[1];
+}
+
+/**
+ * For walls that run along a stairwell opening edge, analyse the ink thickness
+ * profile and mark any consistently thin sub-spans as `railSpans` — these are
+ * drawn as a balustrade (double-line) rather than a structural wall.
+ *
+ * Only fires when the profile is genuinely mixed (≥15 % thick AND ≥15 % thin),
+ * so a uniformly thin partition (light wall) or uniformly thick wall is never
+ * split. Fallback: the wall stays as-is and renders solid.
+ */
+function markBalustradeSpans(
+  walls: DetectedWall[],
+  stairs: DetectedStair[],
+  mediumMask: Uint8Array,
+  width: number,
+  height: number,
+  wallThickness: number,
+): DetectedWall[] {
+  if (!stairs.length) return walls;
+  // Balustrades are drawn as thin double-lines (2–4 px). Structural walls are 6–12 px.
+  // Threshold at ~55 % of the measured wallThickness catches the 4-px balustrade strokes
+  // on fp-001 while excluding everything ≥ 5 px (structural or lighter partitions).
+  const THIN_THRESHOLD = Math.max(4, wallThickness * 0.55);
+  // The detected stair bounding box can extend up to 2–3 wall-thicknesses beyond the
+  // balustrade because the measurement includes surrounding wall linework. Use a
+  // looser tolerance so the balustrade wall is reliably found.
+  const STAIR_TOLERANCE = wallThickness * 3;
+  const SAMPLES = 60;
+  const MIN_THIN_FRACTION = 0.15;
+  const MIN_THICK_FRACTION = 0.15;
+  // Minimum rail span length in pixels. Filters out small noise detections (e.g. a
+  // short thin section at a T-junction). A real balustrade spans most of the opening.
+  const MIN_SPAN_PX = wallThickness * 5;
+
+  return walls.map((wall) => {
+    const wallCenterCoord = wall.axis === "vertical"
+      ? (wall.start[0] + wall.end[0]) / 2
+      : (wall.start[1] + wall.end[1]) / 2;
+
+    const onEdge = stairs.some((stair) => wall.axis === "vertical"
+      ? (Math.abs(wallCenterCoord - stair.x) <= STAIR_TOLERANCE || Math.abs(wallCenterCoord - (stair.x + stair.width)) <= STAIR_TOLERANCE)
+      : (Math.abs(wallCenterCoord - stair.y) <= STAIR_TOLERANCE || Math.abs(wallCenterCoord - (stair.y + stair.height)) <= STAIR_TOLERANCE));
+
+    if (!onEdge) return wall;
+
+    const runStart = wall.axis === "vertical" ? wall.start[1] : wall.start[0];
+    const runEnd = wall.axis === "vertical" ? wall.end[1] : wall.end[0];
+    const line = wall.axis === "vertical"
+      ? (wall.start[0] + wall.end[0]) / 2
+      : (wall.start[1] + wall.end[1]) / 2;
+    const maxHalf = Math.max(4, Math.round(wallThickness * 1.5));
+
+    const thicknesses: number[] = [];
+    for (let i = 0; i < SAMPLES; i += 1) {
+      const p = runStart + (runEnd - runStart) * i / (SAMPLES - 1);
+      thicknesses.push(localThicknessAt(mediumMask, width, height, wall.axis, line, p, maxHalf));
+    }
+
+    const thinCount = thicknesses.filter((t) => t > 0 && t <= THIN_THRESHOLD).length;
+    const thickCount = thicknesses.filter((t) => t > THIN_THRESHOLD).length;
+    if (thinCount < SAMPLES * MIN_THIN_FRACTION || thickCount < SAMPLES * MIN_THICK_FRACTION) return wall;
+
+    const runLength = Math.abs(runEnd - runStart);
+    const railSpans: Array<[number, number]> = [];
+    let spanStart: number | null = null;
+    for (let i = 0; i < SAMPLES; i += 1) {
+      const thin = thicknesses[i] > 0 && thicknesses[i] <= THIN_THRESHOLD;
+      const frac = i / (SAMPLES - 1);
+      if (thin) {
+        if (spanStart === null) spanStart = frac;
+      } else if (spanStart !== null) {
+        if ((frac - spanStart) * runLength >= MIN_SPAN_PX) railSpans.push([spanStart, frac]);
+        spanStart = null;
+      }
+    }
+    if (spanStart !== null && (1 - spanStart) * runLength >= MIN_SPAN_PX) railSpans.push([spanStart, 1]);
+
+    return railSpans.length ? { ...wall, railSpans } : wall;
+  });
+}
+
 function detectFloorStructureAligned(
   pixels: ArrayLike<number>,
   width: number,
@@ -2188,24 +2298,25 @@ function detectFloorStructureAligned(
     footprintBounds,
   );
   const stairs = detectStairs(rawSegments, mediumMask, width, height, footprintBounds, minimumDimension, wallThickness);
-  const openingCount = walls.reduce((sum, wall) => sum + wall.openings.length, 0);
-  const topologyVotes = walls.filter((wall) => walls.some((other) => other !== wall && (
+  const walledWithRails = markBalustradeSpans(walls as DetectedWall[], stairs, mediumMask, width, height, wallThickness);
+  const openingCount = walledWithRails.reduce((sum, wall) => sum + wall.openings.length, 0);
+  const topologyVotes = walledWithRails.filter((wall) => walledWithRails.some((other) => other !== wall && (
     Math.hypot(wall.start[0] - other.start[0], wall.start[1] - other.start[1]) <= wallThickness * 2.5
     || Math.hypot(wall.end[0] - other.end[0], wall.end[1] - other.end[1]) <= wallThickness * 2.5
     || (wall.axis !== other.axis && wall.start[0] <= other.end[0] + wallThickness && wall.end[0] >= other.start[0] - wallThickness)
   ))).length;
   const confidence = clamp(
     0.46
-      + Math.min(0.24, walls.length * 0.018)
+      + Math.min(0.24, walledWithRails.length * 0.018)
       + Math.min(0.1, topologyVotes * 0.012)
       + Math.min(0.08, openingCount * 0.012)
       + (outdoorAreas.length ? 0.03 : 0)
       + (stairs.length ? 0.025 : 0),
-    walls.length >= 4 ? 0.58 : 0.38,
+    walledWithRails.length >= 4 ? 0.58 : 0.38,
     0.94,
   );
 
-  const rooms = detectRooms(walls, footprintBounds);
+  const rooms = detectRooms(walledWithRails, footprintBounds);
   // Furniture detection: use the medium mask (thin strokes visible) and keep
   // results only within the footprint interior. Stair shafts (their treads
   // read as a grid of boxes) and wall corridors (their corners read as
@@ -2217,7 +2328,7 @@ function detectFloorStructureAligned(
     maxX: stair.x + stair.width + wallThickness,
     maxY: stair.y + stair.height + wallThickness,
   }));
-  const wallObstacles: FixtureObstacle[] = walls.map((wall) => ({
+  const wallObstacles: FixtureObstacle[] = walledWithRails.map((wall) => ({
     minX: Math.min(wall.start[0], wall.end[0]) - wall.thickness,
     minY: Math.min(wall.start[1], wall.end[1]) - wall.thickness,
     maxX: Math.max(wall.start[0], wall.end[0]) + wall.thickness,
@@ -2231,7 +2342,7 @@ function detectFloorStructureAligned(
     regionId: region.id,
     sourceWidth: width,
     sourceHeight: height,
-    walls,
+    walls: walledWithRails,
     outdoorAreas,
     stairs,
     rooms,
@@ -2247,7 +2358,7 @@ function detectFloorStructureAligned(
     diagnostics: {
       threshold,
       wallThickness,
-      geometryVotes: walls.length,
+      geometryVotes: walledWithRails.length,
       topologyVotes,
       openingVotes: openingCount,
       stairVotes: stairs.length,
@@ -2454,6 +2565,16 @@ export function structureToLevel(
         confidence: opening.confidence,
       }];
     });
+    // railSpans are fractions [0,1] of the original pixel wall run. Convert to
+    // local scene metre offsets (same frame as opening.offset) by multiplying
+    // by the original pixel length, subtracting the start trim, and scaling.
+    const originalLength = Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1]);
+    const railSpans: Array<[number, number]> = (wall.railSpans ?? []).map(([from, to]): [number, number] => {
+      const localFrom = Math.max(0, (from * originalLength - trim) * pixelsToMetres);
+      const localTo = Math.min(clippedLength * pixelsToMetres, (to * originalLength - trim) * pixelsToMetres);
+      return [localFrom, localTo];
+    }).filter(([f, t]) => t - f > 0.05);
+
     return {
       id: `${region.id}-${wall.id}`,
       start,
@@ -2462,6 +2583,7 @@ export function structureToLevel(
       openings,
       confidence: wall.confidence,
       weight: wall.weight,
+      ...(railSpans.length ? { railSpans } : {}),
     };
   }).filter((wall) => Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1]) > 0.05);
 

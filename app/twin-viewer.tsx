@@ -16,7 +16,7 @@ import {
   type StairConnection,
   type StairwellOpening,
 } from "./scene-geometry";
-import { type Fixture, type Level, type OutdoorArea, type Wall } from "./scene-data";
+import { type Fixture, type Level, type Opening, type OutdoorArea, type Wall } from "./scene-data";
 
 export default function TwinViewer({
   exploded,
@@ -223,6 +223,21 @@ function StairwellTrim({
   // Intervals along an edge already covered by a structural wall. WallModel
   // extrudes those full-height, so the railing must skip exactly those spans
   // (and only those) — the rest of the edge still gets a rail.
+  // Convert local metre rail span offsets → absolute scene run-axis coordinates.
+  const railSpanToAbsoluteCoords = (w: Wall): Array<[number, number]> => {
+    if (!w.railSpans?.length) return [];
+    const wallLength = Math.hypot(w.end[0] - w.start[0], w.end[1] - w.start[1]);
+    if (wallLength < 0.01) return [];
+    const isVertical = Math.abs(w.end[0] - w.start[0]) < Math.abs(w.end[1] - w.start[1]);
+    const dRun = isVertical ? w.end[1] - w.start[1] : w.end[0] - w.start[0];
+    const runStart = isVertical ? w.start[1] : w.start[0];
+    return w.railSpans.map(([from, to]) => {
+      const a = runStart + dRun * (from / wallLength);
+      const b = runStart + dRun * (to / wallLength);
+      return [Math.min(a, b) - wallTolerance, Math.max(a, b) + wallTolerance] as [number, number];
+    });
+  };
+
   const wallCutsOnEdge = (edgeCoord: number, edgeAxis: "x" | "z"): Array<[number, number]> => {
     const cuts: Array<[number, number]> = [];
     for (const w of walls) {
@@ -230,13 +245,17 @@ function StairwellTrim({
         const isHorizontal = Math.abs(w.end[1] - w.start[1]) < Math.abs(w.end[0] - w.start[0]);
         const wallZ = (w.start[1] + w.end[1]) / 2;
         if (isHorizontal && Math.abs(wallZ - edgeCoord) <= wallTolerance) {
-          cuts.push([Math.min(w.start[0], w.end[0]) - wallTolerance, Math.max(w.start[0], w.end[0]) + wallTolerance]);
+          const fullSpan: [number, number] = [Math.min(w.start[0], w.end[0]) - wallTolerance, Math.max(w.start[0], w.end[0]) + wallTolerance];
+          const railXSpans = railSpanToAbsoluteCoords(w);
+          cuts.push(...(railXSpans.length ? subtractIntervals(fullSpan, railXSpans) : [fullSpan]));
         }
       } else {
         const isVertical = Math.abs(w.end[0] - w.start[0]) < Math.abs(w.end[1] - w.start[1]);
         const wallX = (w.start[0] + w.end[0]) / 2;
         if (isVertical && Math.abs(wallX - edgeCoord) <= wallTolerance) {
-          cuts.push([Math.min(w.start[1], w.end[1]) - wallTolerance, Math.max(w.start[1], w.end[1]) + wallTolerance]);
+          const fullSpan: [number, number] = [Math.min(w.start[1], w.end[1]) - wallTolerance, Math.max(w.start[1], w.end[1]) + wallTolerance];
+          const railZSpans = railSpanToAbsoluteCoords(w);
+          cuts.push(...(railZSpans.length ? subtractIntervals(fullSpan, railZSpans) : [fullSpan]));
         }
       }
     }
@@ -605,22 +624,38 @@ function WallModel({ wall, elevation, levelHeight, wallCutaway }: { wall: Wall; 
     );
   };
 
-  openings.forEach((opening, index) => {
-    const from = clamp(opening.offset);
-    const to = clamp(opening.offset + opening.width);
-    addBox(`${wall.id}-body-${index}`, cursor, from, wall.height ?? levelHeight, 0);
-    if (opening.kind === "window") {
-      const sill = opening.sill ?? 0.9;
-      addBox(`${wall.id}-sill-${index}`, from, to, sill, 0);
-      addBox(`${wall.id}-header-${index}`, from, to, levelHeight - sill - opening.height, sill + opening.height);
-      addBox(`${wall.id}-glass-${index}`, from + 0.04, to - 0.04, opening.height - 0.08, sill + 0.04, "#7fc6d1", 0.46);
-    } else {
-      addBox(`${wall.id}-header-${index}`, from, to, levelHeight - opening.height, opening.height);
-      // Brown door leaf — a thin panel that fills the door opening
-      addBox(`${wall.id}-door-${index}`, from + 0.03, to - 0.03, opening.height - 0.02, 0.01, "#7a4f28", 1, 0.04);
+  // Build a unified, sorted list of all gaps in the wall (openings + rail spans).
+  // Opening gaps carry their own infill geometry; rail gaps are empty — the
+  // StairwellTrim renders those spans as railing instead of solid wall.
+  type WallGap =
+    | { kind: "opening"; from: number; to: number; opening: Opening; idx: number }
+    | { kind: "rail"; from: number; to: number };
+  const gaps: WallGap[] = [
+    ...openings.map((opening, idx): WallGap => ({
+      kind: "opening", from: clamp(opening.offset), to: clamp(opening.offset + opening.width), opening, idx,
+    })),
+    ...(wall.railSpans ?? []).map(([rs, re]): WallGap => ({
+      kind: "rail", from: clamp(rs), to: clamp(re),
+    })),
+  ].sort((a, b) => a.from - b.from);
+
+  for (const gap of gaps) {
+    if (gap.from > cursor + 0.01) addBox(`${wall.id}-body-${gap.from.toFixed(3)}`, cursor, gap.from, wall.height ?? levelHeight, 0);
+    if (gap.kind === "opening") {
+      const { opening, idx } = gap;
+      if (opening.kind === "window") {
+        const sill = opening.sill ?? 0.9;
+        addBox(`${wall.id}-sill-${idx}`, gap.from, gap.to, sill, 0);
+        addBox(`${wall.id}-header-${idx}`, gap.from, gap.to, levelHeight - sill - opening.height, sill + opening.height);
+        addBox(`${wall.id}-glass-${idx}`, gap.from + 0.04, gap.to - 0.04, opening.height - 0.08, sill + 0.04, "#7fc6d1", 0.46);
+      } else {
+        addBox(`${wall.id}-header-${idx}`, gap.from, gap.to, levelHeight - opening.height, opening.height);
+        addBox(`${wall.id}-door-${idx}`, gap.from + 0.03, gap.to - 0.03, opening.height - 0.02, 0.01, "#7a4f28", 1, 0.04);
+      }
     }
-    cursor = to;
-  });
+    // rail gaps: no solid wall rendered here — StairwellTrim draws railing
+    cursor = Math.max(cursor, gap.to);
+  }
   addBox(`${wall.id}-body-end`, cursor, length, wall.height ?? levelHeight, 0);
   return <>{pieces}</>;
 }
