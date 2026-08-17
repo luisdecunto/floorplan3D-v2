@@ -22,6 +22,7 @@ import {
   Move3D,
   Ruler,
   ScanLine,
+  Share2,
   ShieldCheck,
   SlidersHorizontal,
   Smartphone,
@@ -469,6 +470,27 @@ export default function Home() {
     } : project);
   }
 
+  async function shareProject() {
+    if (!document) return;
+    setProjectMessage("Creating share link…");
+    try {
+      const response = await fetch("/api/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(document),
+      });
+      const data = await response.json() as { url?: string; error?: string };
+      if (!response.ok || !data.url) {
+        setProjectMessage(data.error ?? "Failed to create share link.");
+        return;
+      }
+      await navigator.clipboard.writeText(data.url).catch(() => undefined);
+      setProjectMessage(`Share link copied: ${data.url}`);
+    } catch {
+      setProjectMessage("Share link unavailable. Export the project file to share manually.");
+    }
+  }
+
   if (stage === "analyzing") return <AnalysisScreen step={analysisStep} />;
 
   if (stage === "workspace") {
@@ -486,6 +508,7 @@ export default function Home() {
         mobilePanel={mobilePanel}
         moveLevel={moveLevel}
         previewLevels={previewLevels}
+        shareProject={shareProject}
         projectMessage={projectMessage}
         regions={regions}
         renameLevel={renameLevel}
@@ -617,6 +640,7 @@ function Workspace({
   selectedLevel,
   selectedRegion,
   selectedWallId,
+  shareProject,
   structures,
   setActiveLevel,
   setExploded,
@@ -653,6 +677,7 @@ function Workspace({
   selectedLevel: Level;
   selectedRegion: SourceRegion;
   selectedWallId: string | null;
+  shareProject: () => void;
   structures: StructureMap;
   setActiveLevel: (id: string) => void;
   setExploded: (value: boolean) => void;
@@ -678,6 +703,7 @@ function Workspace({
         <div className="project-name"><span>V2 project</span><strong>{document?.name ?? "Sample residence"}</strong></div>
         <div className="workspace-status"><span className="saved-dot" />Saved on this device</div>
         {document && <button className="header-tool" onClick={() => downloadProject(document)}><Download size={16} /><span>Export</span></button>}
+        {document && <button className="header-tool" onClick={shareProject}><Share2 size={16} /><span>Share</span></button>}
         {document?.edits.length ? <button className="icon-button" onClick={undoEdit} aria-label="Undo last structural edit"><Undo2 size={18} /></button> : null}
         <button className="icon-button" aria-label="Project options"><MoreHorizontal size={20} /></button>
       </header>

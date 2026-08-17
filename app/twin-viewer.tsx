@@ -16,7 +16,7 @@ import {
   type StairConnection,
   type StairwellOpening,
 } from "./scene-geometry";
-import { type Level, type OutdoorArea, type Wall } from "./scene-data";
+import { type Fixture, type Level, type OutdoorArea, type Wall } from "./scene-data";
 
 export default function TwinViewer({
   exploded,
@@ -59,7 +59,7 @@ export default function TwinViewer({
         <OrbitControls makeDefault minDistance={7} maxDistance={30} minPolarAngle={0.35} maxPolarAngle={Math.PI / 2.05} target={[footprint.centerX, 2.2, footprint.centerZ]} />
         <Environment preset="city" environmentIntensity={0.35} />
       </Canvas>
-      <div className="viewer-legend"><span><i className="legend-wall" /> Structure</span><span><i className="legend-window" /> Windows</span><span><i className="legend-stair" /> Stairs</span><span><i className="legend-outdoor" /> Balcony</span><span><i className="legend-detail" /> Plan details</span></div>
+      <div className="viewer-legend"><span><i className="legend-wall" /> Structure</span><span><i className="legend-door" /> Doors</span><span><i className="legend-window" /> Windows</span><span><i className="legend-stair" /> Stairs</span><span><i className="legend-outdoor" /> Balcony</span><span><i className="legend-fixture" /> Fixtures</span><span><i className="legend-detail" /> Plan details</span></div>
     </div>
   );
 }
@@ -81,8 +81,9 @@ function LevelModel({
     <group>
       {pieces.map((piece) => <SlabPieceModel key={piece.id} piece={piece} elevation={y} />)}
       {level.floorTextureUrl && <PlanFloor level={level} pieces={pieces} elevation={y} />}
-      {opening && <StairwellTrim opening={opening} elevation={y} />}
+      {opening && <StairwellTrim opening={opening} elevation={y} walls={level.walls} />}
       {(level.outdoorAreas ?? []).map((area) => <OutdoorAreaModel key={area.id} area={area} elevation={y} />)}
+      {(level.fixtures ?? []).map((fixture) => <FurnitureModel key={fixture.id} fixture={fixture} elevation={y} />)}
       {level.walls.map((wall) => <WallModel key={wall.id} wall={wall} elevation={y} levelHeight={level.ceilingHeight} wallCutaway={wallCutaway} />)}
     </group>
   );
@@ -127,21 +128,151 @@ function PlanFloorPiece({ level, piece, elevation }: { level: Level; piece: Slab
   );
 }
 
-function StairwellTrim({ opening, elevation }: { opening: StairwellOpening; elevation: number }) {
-  const thickness = 0.07;
-  const height = 0.24;
+/**
+ * Railing along one edge of the stairwell opening. Suppressed when a
+ * structural wall already runs on that edge (detected from the level's walls).
+ */
+function StairwellRailEdge({
+  position,
+  size,
+  axis,
+  edgeKey,
+}: {
+  position: [number, number, number];
+  size: [number, number, number];
+  axis: "x" | "z";
+  edgeKey: string;
+}) {
+  const railHeight = 0.9;
+  const barThickness = 0.05;
+  const spanLength = axis === "x" ? size[0] : size[2];
+  const postCount = Math.max(2, Math.ceil(spanLength / 1.0));
+  const [cx, cy, cz] = position;
   return (
     <group>
-      {[
-        { id: "back", position: [opening.x, elevation - height / 2, opening.z - opening.depth / 2] as [number, number, number], size: [opening.width, height, thickness] as [number, number, number] },
-        { id: "front", position: [opening.x, elevation - height / 2, opening.z + opening.depth / 2] as [number, number, number], size: [opening.width, height, thickness] as [number, number, number] },
-        { id: "left", position: [opening.x - opening.width / 2, elevation - height / 2, opening.z] as [number, number, number], size: [thickness, height, opening.depth] as [number, number, number] },
-        { id: "right", position: [opening.x + opening.width / 2, elevation - height / 2, opening.z] as [number, number, number], size: [thickness, height, opening.depth] as [number, number, number] },
-      ].map((trim) => (
-        <mesh key={trim.id} position={trim.position} receiveShadow castShadow>
-          <boxGeometry args={trim.size} />
-          <meshStandardMaterial color="#453f48" roughness={0.82} />
+      {/* Two horizontal bars */}
+      {[railHeight * 0.55, railHeight].map((h, i) => (
+        <mesh key={`${edgeKey}-bar-${i}`} position={[cx, cy + h, cz]} castShadow>
+          <boxGeometry args={[size[0], barThickness, size[2]]} />
+          <meshStandardMaterial color="#36413f" roughness={0.56} metalness={0.28} />
         </mesh>
+      ))}
+      {/* Vertical posts */}
+      {Array.from({ length: postCount + 1 }, (_, i) => {
+        const t = i / postCount;
+        const px = axis === "x" ? cx - spanLength / 2 + spanLength * t : cx;
+        const pz = axis === "z" ? cz - spanLength / 2 + spanLength * t : cz;
+        return (
+          <mesh key={`${edgeKey}-post-${i}`} position={[px, cy + railHeight / 2, pz]} castShadow>
+            <boxGeometry args={[barThickness, railHeight, barThickness]} />
+            <meshStandardMaterial color="#36413f" roughness={0.56} metalness={0.28} />
+          </mesh>
+        );
+      })}
+      {/* Translucent glass infill */}
+      <mesh position={[cx, cy + railHeight * 0.42, cz]} castShadow>
+        <boxGeometry args={[size[0], railHeight * 0.65, size[2]]} />
+        <meshStandardMaterial color="#85b8b6" roughness={0.28} metalness={0.08} transparent opacity={0.35} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
+function StairwellTrim({
+  opening,
+  elevation,
+  walls,
+}: {
+  opening: StairwellOpening;
+  elevation: number;
+  walls: Wall[];
+}) {
+  const wallTolerance = 0.32;
+  // Determine which edges already have a structural wall running along them so
+  // we can suppress the railing there and let the wall stand alone.
+  const hasWallOnEdge = (edgeCoord: number, edgeAxis: "x" | "z", span: [number, number]) => {
+    const [spanMin, spanMax] = span;
+    return walls.some((w) => {
+      // Check walls running parallel to the edge
+      if (edgeAxis === "z") {
+        // We need a horizontal wall (running in X) at this z coord
+        const wallMinX = Math.min(w.start[0], w.end[0]);
+        const wallMaxX = Math.max(w.start[0], w.end[0]);
+        const wallZ = (w.start[1] + w.end[1]) / 2;
+        const isHorizontal = Math.abs(w.end[1] - w.start[1]) < Math.abs(w.end[0] - w.start[0]);
+        return isHorizontal
+          && Math.abs(wallZ - edgeCoord) <= wallTolerance
+          && wallMinX <= spanMin + wallTolerance
+          && wallMaxX >= spanMax - wallTolerance;
+      } else {
+        // We need a vertical wall (running in Z) at this x coord
+        const wallMinZ = Math.min(w.start[1], w.end[1]);
+        const wallMaxZ = Math.max(w.start[1], w.end[1]);
+        const wallX = (w.start[0] + w.end[0]) / 2;
+        const isVertical = Math.abs(w.end[0] - w.start[0]) < Math.abs(w.end[1] - w.start[1]);
+        return isVertical
+          && Math.abs(wallX - edgeCoord) <= wallTolerance
+          && wallMinZ <= spanMin + wallTolerance
+          && wallMaxZ >= spanMax - wallTolerance;
+      }
+    });
+  };
+
+  const left = opening.x - opening.width / 2;
+  const right = opening.x + opening.width / 2;
+  const back = opening.z - opening.depth / 2;
+  const front = opening.z + opening.depth / 2;
+  const y = elevation;
+
+  const edges = [
+    {
+      id: "back",
+      position: [opening.x, y, back] as [number, number, number],
+      size: [opening.width, 0.02, 0.02] as [number, number, number],
+      axis: "x" as const,
+      edgeZ: back,
+      span: [left, right] as [number, number],
+      edgeAxis: "z" as const,
+    },
+    {
+      id: "front",
+      position: [opening.x, y, front] as [number, number, number],
+      size: [opening.width, 0.02, 0.02] as [number, number, number],
+      axis: "x" as const,
+      edgeZ: front,
+      span: [left, right] as [number, number],
+      edgeAxis: "z" as const,
+    },
+    {
+      id: "left",
+      position: [left, y, opening.z] as [number, number, number],
+      size: [0.02, 0.02, opening.depth] as [number, number, number],
+      axis: "z" as const,
+      edgeZ: left,
+      span: [back, front] as [number, number],
+      edgeAxis: "x" as const,
+    },
+    {
+      id: "right",
+      position: [right, y, opening.z] as [number, number, number],
+      size: [0.02, 0.02, opening.depth] as [number, number, number],
+      axis: "z" as const,
+      edgeZ: right,
+      span: [back, front] as [number, number],
+      edgeAxis: "x" as const,
+    },
+  ];
+
+  return (
+    <group>
+      {edges.map((edge) => hasWallOnEdge(edge.edgeZ, edge.edgeAxis, edge.span) ? null : (
+        <StairwellRailEdge
+          key={edge.id}
+          position={edge.position}
+          size={edge.size}
+          axis={edge.axis}
+          edgeKey={edge.id}
+        />
       ))}
     </group>
   );
@@ -291,6 +422,131 @@ function OutdoorAreaModel({ area, elevation }: { area: OutdoorArea; elevation: n
   );
 }
 
+function FurnitureModel({ fixture, elevation }: { fixture: Fixture; elevation: number }) {
+  const y = elevation + 0.06; // sit on the floor slab
+  const { x, z, width, depth, rotation } = fixture;
+  switch (fixture.kind) {
+    case "stove": return (
+      <group position={[x, y, z]} rotation={[0, rotation, 0]}>
+        <mesh castShadow receiveShadow>
+          <boxGeometry args={[width, 0.06, depth]} />
+          <meshStandardMaterial color="#c8c6c0" roughness={0.55} metalness={0.35} />
+        </mesh>
+        {/* 4 burner rings */}
+        {[[-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.3, 0.3]].map(([dx, dz], i) => (
+          <mesh key={i} position={[width * dx, 0.04, depth * dz]} castShadow>
+            <cylinderGeometry args={[width * 0.15, width * 0.15, 0.03, 12]} />
+            <meshStandardMaterial color="#3a3a3a" roughness={0.7} metalness={0.2} />
+          </mesh>
+        ))}
+      </group>
+    );
+    case "fridge": return (
+      <group position={[x, y + (fixture.depth ?? depth) * 0.8 / 2, z]} rotation={[0, rotation, 0]}>
+        <mesh castShadow receiveShadow>
+          <boxGeometry args={[width, Math.min(1.85, Math.max(0.5, depth * 4)), depth]} />
+          <meshStandardMaterial color="#e8e6e0" roughness={0.45} metalness={0.15} />
+        </mesh>
+        {/* Handle */}
+        <mesh position={[width * 0.38, 0.3, depth * 0.52]} castShadow>
+          <boxGeometry args={[0.025, 0.28, 0.03]} />
+          <meshStandardMaterial color="#aaa" roughness={0.3} metalness={0.7} />
+        </mesh>
+      </group>
+    );
+    case "sink": return (
+      <group position={[x, y, z]} rotation={[0, rotation, 0]}>
+        <mesh castShadow receiveShadow>
+          <boxGeometry args={[width, 0.05, depth]} />
+          <meshStandardMaterial color="#d8d4cc" roughness={0.5} />
+        </mesh>
+        <mesh position={[0, 0.04, 0]} castShadow>
+          <boxGeometry args={[width * 0.75, 0.06, depth * 0.8]} />
+          <meshStandardMaterial color="#b5cfd4" roughness={0.28} metalness={0.05} />
+        </mesh>
+        {/* Drain dot */}
+        <mesh position={[0, 0.07, 0]}>
+          <cylinderGeometry args={[Math.min(width, depth) * 0.06, Math.min(width, depth) * 0.06, 0.02, 8]} />
+          <meshStandardMaterial color="#888" metalness={0.6} roughness={0.3} />
+        </mesh>
+      </group>
+    );
+    case "island": return (
+      <group position={[x, y + 0.44, z]} rotation={[0, rotation, 0]}>
+        <mesh castShadow receiveShadow>
+          <boxGeometry args={[width, 0.9, depth]} />
+          <meshStandardMaterial color="#c8bfa8" roughness={0.72} />
+        </mesh>
+        <mesh position={[0, 0.46, 0]} castShadow>
+          <boxGeometry args={[width + 0.02, 0.04, depth + 0.02]} />
+          <meshStandardMaterial color="#d4cdb8" roughness={0.5} metalness={0.08} />
+        </mesh>
+      </group>
+    );
+    case "toilet": return (
+      <group position={[x, y, z]} rotation={[0, rotation, 0]}>
+        {/* Cistern */}
+        <mesh position={[0, 0.2, -depth * 0.32]} castShadow receiveShadow>
+          <boxGeometry args={[width * 0.85, 0.4, depth * 0.32]} />
+          <meshStandardMaterial color="#eeece6" roughness={0.5} />
+        </mesh>
+        {/* Bowl */}
+        <mesh position={[0, 0.18, depth * 0.15]} castShadow receiveShadow>
+          <cylinderGeometry args={[width * 0.44, width * 0.36, 0.36, 14]} />
+          <meshStandardMaterial color="#eeece6" roughness={0.4} />
+        </mesh>
+      </group>
+    );
+    case "shower": return (
+      <group position={[x, y, z]} rotation={[0, rotation, 0]}>
+        <mesh position={[0, 0.04, 0]} castShadow receiveShadow>
+          <boxGeometry args={[width, 0.08, depth]} />
+          <meshStandardMaterial color="#d0e8ec" roughness={0.3} metalness={0.05} />
+        </mesh>
+        {/* Translucent screen on one side */}
+        <mesh position={[0, 0.9, -depth / 2]}>
+          <boxGeometry args={[width, 1.8, 0.02]} />
+          <meshStandardMaterial color="#a0cccc" transparent opacity={0.35} depthWrite={false} />
+        </mesh>
+      </group>
+    );
+    case "bathtub": return (
+      <group position={[x, y, z]} rotation={[0, rotation, 0]}>
+        <mesh castShadow receiveShadow>
+          <boxGeometry args={[width, 0.52, depth]} />
+          <meshStandardMaterial color="#e8e4de" roughness={0.4} />
+        </mesh>
+        <mesh position={[0, 0.28, 0]}>
+          <boxGeometry args={[width * 0.84, 0.18, depth * 0.84]} />
+          <meshStandardMaterial color="#b8d4d8" roughness={0.22} metalness={0.04} transparent opacity={0.6} depthWrite={false} />
+        </mesh>
+      </group>
+    );
+    case "washer": return (
+      <group position={[x, y + 0.42, z]} rotation={[0, rotation, 0]}>
+        <mesh castShadow receiveShadow>
+          <boxGeometry args={[width, 0.84, depth]} />
+          <meshStandardMaterial color="#e0ddd6" roughness={0.5} />
+        </mesh>
+        {/* Drum circle */}
+        <mesh position={[0, 0.06, depth * 0.52]}>
+          <cylinderGeometry args={[Math.min(width, depth) * 0.34, Math.min(width, depth) * 0.34, 0.03, 14]} />
+          <meshStandardMaterial color="#b4c8cc" roughness={0.3} metalness={0.1} />
+        </mesh>
+      </group>
+    );
+    case "cupboard": return (
+      <group position={[x, y + 0.4, z]} rotation={[0, rotation, 0]}>
+        <mesh castShadow receiveShadow>
+          <boxGeometry args={[width, 0.8, depth]} />
+          <meshStandardMaterial color="#c4b89a" roughness={0.65} />
+        </mesh>
+      </group>
+    );
+    default: return null;
+  }
+}
+
 function WallModel({ wall, elevation, levelHeight, wallCutaway }: { wall: Wall; elevation: number; levelHeight: number; wallCutaway: number }) {
   const dx = wall.end[0] - wall.start[0];
   const dz = wall.end[1] - wall.start[1];
@@ -306,7 +562,7 @@ function WallModel({ wall, elevation, levelHeight, wallCutaway }: { wall: Wall; 
   // keeps door and window geometry below the cut intact.
   const cutHeight = levelHeight * wallCutaway;
   const clamp = (value: number) => Math.max(0, Math.min(length, value));
-  const addBox = (key: string, from: number, to: number, height: number, base: number, color = "#f3f0e8", opacity = 1) => {
+  const addBox = (key: string, from: number, to: number, height: number, base: number, color = "#f3f0e8", opacity = 1, overrideDepth?: number) => {
     if (base >= cutHeight - 0.02) return;
     const clippedHeight = Math.min(height, cutHeight - base);
     if (to - from <= 0.02 || clippedHeight <= 0.02) return;
@@ -316,7 +572,7 @@ function WallModel({ wall, elevation, levelHeight, wallCutaway }: { wall: Wall; 
     const z = wall.start[1] + dz * t;
     pieces.push(
       <mesh key={key} position={[x, elevation + base + clippedHeight / 2, z]} rotation={[0, -angle, 0]} castShadow receiveShadow>
-        <boxGeometry args={[to - from, clippedHeight, wall.thickness ?? 0.18]} />
+        <boxGeometry args={[to - from, clippedHeight, overrideDepth ?? wall.thickness ?? 0.18]} />
         <meshStandardMaterial color={color} roughness={0.72} transparent={opacity < 1} opacity={opacity} depthWrite={opacity >= 0.99} />
       </mesh>,
     );
@@ -333,6 +589,8 @@ function WallModel({ wall, elevation, levelHeight, wallCutaway }: { wall: Wall; 
       addBox(`${wall.id}-glass-${index}`, from + 0.04, to - 0.04, opening.height - 0.08, sill + 0.04, "#7fc6d1", 0.46);
     } else {
       addBox(`${wall.id}-header-${index}`, from, to, levelHeight - opening.height, opening.height);
+      // Brown door leaf — a thin panel that fills the door opening
+      addBox(`${wall.id}-door-${index}`, from + 0.03, to - 0.03, opening.height - 0.02, 0.01, "#7a4f28", 1, 0.04);
     }
     cursor = to;
   });

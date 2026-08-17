@@ -170,8 +170,6 @@ export function buildStairConnections(levels: Level[], explodeDistance = 0): Sta
     const fromElevation = lower.level.elevation + lower.index * explodeDistance + 0.06;
     const toElevation = upper.level.elevation + upper.index * explodeDistance + 0.04;
     const landingElevation = (fromElevation + toElevation) / 2;
-    const lowerSteps = Math.round(clamp((landingElevation - fromElevation) / 0.19, 6, 11));
-    const upperSteps = Math.round(clamp((toElevation - landingElevation) / 0.19, 6, 11));
     const verticalRun = pair.lowerStair.runAxis === "vertical" && pair.upperStair.runAxis === "vertical";
     const clearance = 0.08;
     const crossSize = verticalRun ? opening.width : opening.depth;
@@ -200,10 +198,33 @@ export function buildStairConnections(levels: Level[], explodeDistance = 0): Sta
     const landingCenter = landingRear + landingRun / 2;
     const landingJoint = landingRear + landingRun;
     const flightFrontLimit = openingFront - clearance;
-    const lowerFront = flightFrontLimit;
+    // Extend the lower flight to the detected lower-stair extent (it may span
+    // more steps than the upper flight). Cap at an arbitrary comfortable limit
+    // so the stair never punches too far out of the slab.
+    const detectedLowerFront = verticalRun ? lowerEnds.front[1] : lowerEnds.front[0];
+    const maxLowerExtension = (verticalRun ? opening.depth : opening.width) * 1.6;
+    // When the direction arrow was detected and says the "start" end ascends,
+    // the stair goes the opposite way: the flight bottom is at the BACK of the
+    // detected stair box rather than the front. Flip lowerFront accordingly.
+    const lowerAscendAtStart = pair.lowerStair.ascend === "start";
+    const detectedLowerBack = verticalRun ? lowerEnds.back[1] : lowerEnds.back[0];
+    const rawLowerFront = lowerAscendAtStart ? detectedLowerBack : detectedLowerFront;
+    const lowerFront = Math.min(
+      Math.max(rawLowerFront, flightFrontLimit),
+      openingFront + maxLowerExtension,
+    );
     // The last tread is the upper-floor landing: it must meet the slab edge,
     // rather than stop at the shorter linework detected inside the stair symbol.
     const upperFront = openingFront;
+    // Allocate step counts proportionally to each flight's run length, so the
+    // longer ground-floor flight gets more treads.
+    const lowerRunLength = Math.abs(lowerFront - landingJoint);
+    const upperRunLength = Math.abs(upperFront - landingJoint);
+    const totalRun = lowerRunLength + upperRunLength;
+    const totalSteps = pair.lowerStair.stepCount + pair.upperStair.stepCount;
+    const lowerStepShare = totalRun > 0.01 ? lowerRunLength / totalRun : 0.5;
+    const lowerSteps = Math.round(clamp(totalSteps * lowerStepShare, 6, 14));
+    const upperSteps = Math.round(clamp((toElevation - landingElevation) / 0.19, 4, 10));
     const lowerStart: [number, number] = verticalRun ? [lowerLane, lowerFront] : [lowerFront, lowerLane];
     const lowerLanding: [number, number] = verticalRun ? [lowerLane, landingJoint] : [landingJoint, lowerLane];
     const upperLanding: [number, number] = verticalRun ? [upperLane, landingJoint] : [landingJoint, upperLane];

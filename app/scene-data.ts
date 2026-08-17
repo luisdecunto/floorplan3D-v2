@@ -45,6 +45,32 @@ export type Stair = {
   runAxis: "horizontal" | "vertical";
   stepCount: number;
   confidence: number;
+  /** Which run-axis end goes up. "start" = (x, z) corner; "end" = far corner.
+   *  Absent when the direction arrow could not be detected confidently. */
+  ascend?: "start" | "end";
+};
+
+export type FixtureKind =
+  | "fridge"
+  | "stove"
+  | "sink"
+  | "island"
+  | "cupboard"
+  | "toilet"
+  | "shower"
+  | "bathtub"
+  | "washer";
+
+export type Fixture = {
+  id: string;
+  kind: FixtureKind;
+  x: number;
+  z: number;
+  width: number;
+  depth: number;
+  /** Rotation around Y axis in radians (0 = no rotation). */
+  rotation: number;
+  confidence: number;
 };
 
 export type Level = {
@@ -66,6 +92,7 @@ export type Level = {
   floorTextureUrl?: string;
   detectionConfidence?: number;
   source?: "sample" | "detected";
+  fixtures?: Fixture[];
 };
 
 const groundWalls: Wall[] = [

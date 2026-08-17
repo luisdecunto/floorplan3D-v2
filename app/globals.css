@@ -1035,6 +1035,8 @@ select:focus-visible {
 .viewer-legend i { width: 8px; height: 8px; display: block; }
 .legend-wall { background: #f3f0e8; border: 1px solid #a8a49a; }
 .legend-window { background: #7fc6d1; }
+.legend-door { background: #7a4f28; }
+.legend-fixture { background: #c4b89a; border: 1px solid #6b5a38; }
 .legend-stair { background: #c79a61; border: 1px solid #473f51; }
 .legend-outdoor { background: #c9b88f; border: 1px solid #535b59; }
 .legend-detail { background: #fff; border: 1px solid #181914; background-image: linear-gradient(135deg, transparent 42%, #181914 44%, #181914 54%, transparent 56%); }

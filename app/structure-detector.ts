@@ -1,5 +1,7 @@
 import type { SourceRegion } from "./plan-regions";
-import type { Level, Opening, OutdoorArea, Room, Stair, Wall } from "./scene-data";
+import type { Fixture, Level, Opening, OutdoorArea, Room, Stair, Wall } from "./scene-data";
+import { detectFurniture } from "./furniture-detector.ts";
+export type { DetectedFixture } from "./furniture-detector.ts";
 
 export type Axis = "horizontal" | "vertical";
 
@@ -55,6 +57,10 @@ export type DetectedStair = {
   height: number;
   stepCount: number;
   confidence: number;
+  /** Which end of the run-axis goes UP. "start" = the (x,y) corner; "end" = the
+   *  far corner (x+width, y+height). Absent when the arrow could not be found
+   *  reliably; callers must fall back to the existing heuristic in that case. */
+  ascend?: "start" | "end";
 };
 
 export type DetectedStructure = {
@@ -65,6 +71,7 @@ export type DetectedStructure = {
   outdoorAreas: DetectedOutdoorArea[];
   stairs: DetectedStair[];
   rooms: DetectedRoom[];
+  fixtures: DetectedFixture[];
   floorTextureUrl?: string;
   footprint: { x: number; y: number; width: number; height: number };
   roomCount: number;
@@ -1776,6 +1783,90 @@ export function expandDetectedStairReturn(
   };
 }
 
+/**
+ * Detect the ascent direction of a stair from its direction arrow.
+ *
+ * Architectural plans draw a thin shaft line along the run centerline with a
+ * filled or open arrowhead at the "up" end. Strategy:
+ *   1. Scan the run-axis centerline inside the stair box for a single thin
+ *      (1–4px) continuous or near-continuous stroke — the arrow shaft.
+ *   2. At each end of the shaft, count ink in a small fan to detect whether
+ *      the stroke widens into an arrowhead (V shape). The end with more
+ *      diagonal ink is the "up" direction.
+ *
+ * Returns "start" (low run-coord end goes up) or "end" (high run-coord end
+ * goes up), or null when the evidence is too weak to trust.
+ */
+function detectStairAscendDirection(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  stair: { x: number; y: number; width: number; height: number; runAxis: Axis },
+): "start" | "end" | null {
+  const vertical = stair.runAxis === "vertical";
+  // Run coordinate range and cross-axis center
+  const runMin = Math.round(vertical ? stair.y : stair.x) + 2;
+  const runMax = Math.round(vertical ? stair.y + stair.height : stair.x + stair.width) - 2;
+  const crossCenter = Math.round(vertical ? stair.x + stair.width / 2 : stair.y + stair.height / 2);
+  const crossRange = Math.round((vertical ? stair.width : stair.height) * 0.18);
+  if (runMax - runMin < 10) return null;
+
+  // Count ink on the centerline (within crossRange either side) for each run coordinate
+  const inkAt = (run: number) => {
+    let count = 0;
+    for (let offset = -crossRange; offset <= crossRange; offset += 1) {
+      const x = vertical ? crossCenter + offset : run;
+      const y = vertical ? run : crossCenter + offset;
+      if (x >= 0 && x < width && y >= 0 && y < height && mask[y * width + x]) count += 1;
+    }
+    return count;
+  };
+
+  // Count how many run positions near each end have ink (shaft presence)
+  const probeSpan = Math.max(4, Math.round((runMax - runMin) * 0.12));
+  let startInk = 0;
+  let endInk = 0;
+  for (let i = 0; i < probeSpan; i += 1) {
+    startInk += inkAt(runMin + i);
+    endInk += inkAt(runMax - i);
+  }
+
+  // Count diagonal (angled) strokes near each end — arrowhead signal.
+  // An arrowhead fans outward, so it has ink OUTSIDE the center cross-range.
+  const arrowProbeRun = Math.round((runMax - runMin) * 0.1);
+  const arrowCrossMin = crossRange + 1;
+  const arrowCrossMax = Math.round((vertical ? stair.width : stair.height) * 0.42);
+  const countDiagonalInk = (runEdge: number, runDir: number) => {
+    let count = 0;
+    for (let dr = 0; dr < arrowProbeRun; dr += 1) {
+      const run = runEdge + dr * runDir;
+      for (let offset = -arrowCrossMax; offset <= arrowCrossMax; offset += 1) {
+        const absOffset = Math.abs(offset);
+        if (absOffset < arrowCrossMin) continue;
+        const x = vertical ? crossCenter + offset : run;
+        const y = vertical ? run : crossCenter + offset;
+        if (x >= 0 && x < width && y >= 0 && y < height && mask[y * width + x]) count += 1;
+      }
+    }
+    return count;
+  };
+
+  const startArrow = countDiagonalInk(runMin, 1);   // diagonal ink near the start end
+  const endArrow = countDiagonalInk(runMax, -1);    // diagonal ink near the end end
+
+  // Require that: (a) there's a clear center-line shaft on at least one side,
+  // (b) one end has meaningfully more arrowhead ink than the other.
+  const shaftPresent = Math.max(startInk, endInk) >= probeSpan * crossRange * 0.18;
+  if (!shaftPresent) return null;
+
+  const arrowDiff = Math.abs(endArrow - startArrow);
+  const arrowTotal = startArrow + endArrow;
+  if (arrowTotal < 4 || arrowDiff < arrowTotal * 0.28) return null; // not decisive
+
+  // The end with MORE diagonal ink is the arrowhead = the "up" end
+  return endArrow > startArrow ? "end" : "start";
+}
+
 function detectStairs(
   rawSegments: Segment[],
   mediumMask: Uint8Array,
@@ -1837,7 +1928,7 @@ function detectStairs(
       const crossLength = box.runAxis === "vertical" ? boxWidth : boxHeight;
       if (crossLength > footprintMinimum * 0.32) return [];
       if (boxWidth > (footprint.maxX - footprint.minX) * 0.42 || boxHeight > (footprint.maxY - footprint.minY) * 0.54) return [];
-      return [{
+      const candidate: DetectedStair = {
         id: `stair-${index + 1}`,
         runAxis: box.runAxis,
         x: box.minX,
@@ -1846,7 +1937,10 @@ function detectStairs(
         height: boxHeight,
         stepCount,
         confidence: clamp(0.58 + Math.min(0.2, centers.length * 0.035) + Math.min(0.08, (box.railCount - 2) * 0.02), 0.62, 0.9),
-      }];
+      };
+      const ascend = detectStairAscendDirection(mediumMask, width, height, candidate);
+      if (ascend) candidate.ascend = ascend;
+      return [candidate];
     })
     .sort((a, b) => b.confidence - a.confidence);
   const expanded = detected.map((stair) => expandDetectedStairReturn(stair, mediumMask, width, height, {
@@ -2112,6 +2206,10 @@ function detectFloorStructureAligned(
   );
 
   const rooms = detectRooms(walls, footprintBounds);
+  // Furniture detection: use the medium mask (thin strokes visible) and keep
+  // results only within the footprint interior. Conservative — nothing is
+  // emitted when evidence is ambiguous.
+  const fixtures = detectFurniture(mediumMask, width, footprintBounds, wallThickness);
   return {
     regionId: region.id,
     sourceWidth: width,
@@ -2120,6 +2218,7 @@ function detectFloorStructureAligned(
     outdoorAreas,
     stairs,
     rooms,
+    fixtures,
     footprint: {
       x: footprintBounds.minX,
       y: footprintBounds.minY,
@@ -2219,15 +2318,29 @@ export function alignAdjacentStairStructures(
       .sort((a, b) => a.distance - b.distance);
     const match = candidates[0];
     if (!match || match.distance > 0.22) continue;
-    const projected: DetectedStair = {
-      ...match.stair,
-      runAxis: upperStair.runAxis,
-      x: lower.footprint.x + upperBox.x * lower.footprint.width,
-      y: lower.footprint.y + upperBox.y * lower.footprint.height,
-      width: upperBox.width * lower.footprint.width,
-      height: upperBox.height * lower.footprint.height,
-      confidence: Math.max(match.stair.confidence, upperStair.confidence * 0.94),
-    };
+    // Align only the cross-axis (the shaft position visible in the slab opening)
+    // from the upper floor. Preserve the lower floor's own run-axis extent so
+    // that a ground-floor flight that spans more treads than the upper flight
+    // retains its longer detected length.
+    const projected: DetectedStair = upperStair.runAxis === "vertical"
+      ? {
+          ...match.stair,
+          runAxis: "vertical",
+          // cross-axis: x and width come from upper floor shaft
+          x: lower.footprint.x + upperBox.x * lower.footprint.width,
+          width: upperBox.width * lower.footprint.width,
+          // run-axis: y and height preserved from lower floor's own detection
+          confidence: Math.max(match.stair.confidence, upperStair.confidence * 0.94),
+        }
+      : {
+          ...match.stair,
+          runAxis: "horizontal",
+          // cross-axis: y and height come from upper floor shaft
+          y: lower.footprint.y + upperBox.y * lower.footprint.height,
+          height: upperBox.height * lower.footprint.height,
+          // run-axis: x and width preserved from lower floor's own detection
+          confidence: Math.max(match.stair.confidence, upperStair.confidence * 0.94),
+        };
     aligned[regions[index].id] = {
       ...lower,
       stairs: lower.stairs.map((stair) => stair.id === match.stair.id ? projected : stair),
@@ -2384,12 +2497,24 @@ export function structureToLevel(
     runAxis: stair.runAxis,
     stepCount: stair.stepCount,
     confidence: stair.confidence,
+    ...(stair.ascend ? { ascend: stair.ascend } : {}),
   }));
   const rooms: Room[] = structure.rooms.map((room) => ({
     id: room.id,
     polygon: room.polygon.map(toScene),
     area: Number((room.areaPx * pixelsToMetres * pixelsToMetres).toFixed(1)),
     confidence: room.confidence,
+  }));
+
+  const fixtures: Fixture[] = (structure.fixtures ?? []).map((f) => ({
+    id: f.id,
+    kind: f.kind,
+    x: (f.x - centerX) * pixelsToMetres,
+    z: (f.y - centerY) * pixelsToMetres,
+    width: f.width * pixelsToMetres,
+    depth: f.height * pixelsToMetres,
+    rotation: f.rotation,
+    confidence: f.confidence,
   }));
 
   return {
@@ -2408,6 +2533,7 @@ export function structureToLevel(
     outdoorAreas,
     stairs,
     rooms,
+    fixtures,
     floorTextureUrl: structure.floorTextureUrl,
     detectionConfidence: structure.confidence,
     source: "detected",
