@@ -17,6 +17,12 @@ import {
   type StairwellOpening,
 } from "./scene-geometry";
 import { type Fixture, type Level, type Opening, type OutdoorArea, type Wall } from "./scene-data";
+import {
+  activateRailSpans,
+  clampWallGapsToRails,
+  stairwellRailSegments,
+  type RailSegment,
+} from "./stairwell-rails";
 
 export default function TwinViewer({
   exploded,
@@ -88,48 +94,6 @@ export default function TwinViewer({
   );
 }
 
-/**
- * Keep only the rail spans that sit on an edge of the stairwell opening.
- *
- * A rail span removes solid wall geometry, and only `StairwellTrim` puts a
- * railing back — and it only rails the opening perimeter. A span anywhere else
- * would leave an unexplained hole in a wall, so those are dropped and the wall
- * renders solid. With no opening at all (any floor without a stairwell above),
- * every span is dropped.
- */
-function activateRailSpans(walls: Wall[], opening: StairwellOpening | null): Wall[] {
-  if (!opening) return walls.map((wall) => (wall.railSpans ? { ...wall, railSpans: undefined } : wall));
-  const tolerance = 0.36;
-  const left = opening.x - opening.width / 2;
-  const right = opening.x + opening.width / 2;
-  const back = opening.z - opening.depth / 2;
-  const front = opening.z + opening.depth / 2;
-
-  return walls.map((wall) => {
-    if (!wall.railSpans?.length) return wall;
-    const isVertical = Math.abs(wall.end[0] - wall.start[0]) < Math.abs(wall.end[1] - wall.start[1]);
-    const lineCoord = isVertical ? (wall.start[0] + wall.end[0]) / 2 : (wall.start[1] + wall.end[1]) / 2;
-    // The wall must lie along one of the two opening edges parallel to it.
-    const onEdge = isVertical
-      ? (Math.abs(lineCoord - left) <= tolerance || Math.abs(lineCoord - right) <= tolerance)
-      : (Math.abs(lineCoord - back) <= tolerance || Math.abs(lineCoord - front) <= tolerance);
-    if (!onEdge) return { ...wall, railSpans: undefined };
-
-    // …and each span must overlap the opening's extent along that edge.
-    const wallLength = Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1]);
-    if (wallLength < 0.01) return { ...wall, railSpans: undefined };
-    const runStart = isVertical ? wall.start[1] : wall.start[0];
-    const dRun = isVertical ? wall.end[1] - wall.start[1] : wall.end[0] - wall.start[0];
-    const [spanLo, spanHi] = isVertical ? [back, front] : [left, right];
-    const kept = wall.railSpans.filter(([from, to]) => {
-      const a = runStart + dRun * (from / wallLength);
-      const b = runStart + dRun * (to / wallLength);
-      return Math.min(a, b) < spanHi + tolerance && Math.max(a, b) > spanLo - tolerance;
-    });
-    return kept.length ? { ...wall, railSpans: kept } : { ...wall, railSpans: undefined };
-  });
-}
-
 function LevelModel({
   level,
   opening,
@@ -145,14 +109,19 @@ function LevelModel({
 }) {
   const y = level.elevation + explodeOffset;
   const pieces = slabPieces(level, opening);
-  // Walls and the stairwell trim must agree on which spans are railing, so both
-  // read from the same filtered list.
-  const walls = useMemo(() => activateRailSpans(level.walls, opening), [level.walls, opening]);
+  // Rails are computed once, then the wall gaps are cut to match them, so a
+  // wall can never lose geometry that no railing fills.
+  const candidates = useMemo(() => activateRailSpans(level.walls, opening), [level.walls, opening]);
+  const railSegments = useMemo(
+    () => (opening ? stairwellRailSegments(opening, candidates, access) : []),
+    [opening, candidates, access],
+  );
+  const walls = useMemo(() => clampWallGapsToRails(candidates, railSegments), [candidates, railSegments]);
   return (
     <group>
       {pieces.map((piece) => <SlabPieceModel key={piece.id} piece={piece} elevation={y} />)}
       {level.floorTextureUrl && <PlanFloor level={level} pieces={pieces} elevation={y} />}
-      {opening && <StairwellTrim opening={opening} elevation={y} walls={walls} access={access} />}
+      {opening && <StairwellTrim segments={railSegments} elevation={y} />}
       {(level.outdoorAreas ?? []).map((area) => <OutdoorAreaModel key={area.id} area={area} elevation={y} />)}
       {(level.fixtures ?? []).map((fixture) => <FurnitureModel key={fixture.id} fixture={fixture} elevation={y} />)}
       {walls.map((wall) => <WallModel key={wall.id} wall={wall} elevation={y} levelHeight={level.ceilingHeight} wallCutaway={wallCutaway} />)}
@@ -249,136 +218,27 @@ function StairwellRailEdge({
   );
 }
 
-/** Remove every cut interval from `span`, returning the surviving sub-segments. */
-function subtractIntervals(span: [number, number], cuts: Array<[number, number]>): Array<[number, number]> {
-  let segments: Array<[number, number]> = [[span[0], span[1]]];
-  for (const [cutStart, cutEnd] of cuts) {
-    const next: Array<[number, number]> = [];
-    for (const [segStart, segEnd] of segments) {
-      if (cutEnd <= segStart || cutStart >= segEnd) {
-        next.push([segStart, segEnd]); // no overlap
-        continue;
-      }
-      if (cutStart > segStart) next.push([segStart, cutStart]);
-      if (cutEnd < segEnd) next.push([cutEnd, segEnd]);
-    }
-    segments = next;
-  }
-  // Drop slivers too short to read as a railing.
-  return segments.filter(([s, e]) => e - s > 0.2);
-}
-
-function StairwellTrim({
-  opening,
-  elevation,
-  walls,
-  access,
-}: {
-  opening: StairwellOpening;
-  elevation: number;
-  walls: Wall[];
-  access: { point: [number, number]; width: number } | null;
-}) {
-  const wallTolerance = 0.32;
-  // Intervals along an edge already covered by a structural wall. WallModel
-  // extrudes those full-height, so the railing must skip exactly those spans
-  // (and only those) — the rest of the edge still gets a rail.
-  // Convert local metre rail span offsets → absolute scene run-axis coordinates.
-  const railSpanToAbsoluteCoords = (w: Wall): Array<[number, number]> => {
-    if (!w.railSpans?.length) return [];
-    const wallLength = Math.hypot(w.end[0] - w.start[0], w.end[1] - w.start[1]);
-    if (wallLength < 0.01) return [];
-    const isVertical = Math.abs(w.end[0] - w.start[0]) < Math.abs(w.end[1] - w.start[1]);
-    const dRun = isVertical ? w.end[1] - w.start[1] : w.end[0] - w.start[0];
-    const runStart = isVertical ? w.start[1] : w.start[0];
-    return w.railSpans.map(([from, to]) => {
-      const a = runStart + dRun * (from / wallLength);
-      const b = runStart + dRun * (to / wallLength);
-      return [Math.min(a, b) - wallTolerance, Math.max(a, b) + wallTolerance] as [number, number];
-    });
-  };
-
-  const wallCutsOnEdge = (edgeCoord: number, edgeAxis: "x" | "z"): Array<[number, number]> => {
-    const cuts: Array<[number, number]> = [];
-    for (const w of walls) {
-      if (edgeAxis === "z") {
-        const isHorizontal = Math.abs(w.end[1] - w.start[1]) < Math.abs(w.end[0] - w.start[0]);
-        const wallZ = (w.start[1] + w.end[1]) / 2;
-        if (isHorizontal && Math.abs(wallZ - edgeCoord) <= wallTolerance) {
-          const fullSpan: [number, number] = [Math.min(w.start[0], w.end[0]) - wallTolerance, Math.max(w.start[0], w.end[0]) + wallTolerance];
-          const railXSpans = railSpanToAbsoluteCoords(w);
-          cuts.push(...(railXSpans.length ? subtractIntervals(fullSpan, railXSpans) : [fullSpan]));
-        }
-      } else {
-        const isVertical = Math.abs(w.end[0] - w.start[0]) < Math.abs(w.end[1] - w.start[1]);
-        const wallX = (w.start[0] + w.end[0]) / 2;
-        if (isVertical && Math.abs(wallX - edgeCoord) <= wallTolerance) {
-          const fullSpan: [number, number] = [Math.min(w.start[1], w.end[1]) - wallTolerance, Math.max(w.start[1], w.end[1]) + wallTolerance];
-          const railZSpans = railSpanToAbsoluteCoords(w);
-          cuts.push(...(railZSpans.length ? subtractIntervals(fullSpan, railZSpans) : [fullSpan]));
-        }
-      }
-    }
-    return cuts;
-  };
-
-  const left = opening.x - opening.width / 2;
-  const right = opening.x + opening.width / 2;
-  const back = opening.z - opening.depth / 2;
-  const front = opening.z + opening.depth / 2;
-  const y = elevation;
-
-  // The edge nearest the top-flight landing keeps a gap exactly as wide as the
-  // flight — that is where you step onto the floor. The rest of that edge, and
-  // the whole of the other edges, stay railed unless a wall covers them.
-  let accessEdgeId: string | null = null;
-  let accessGap: [number, number] | null = null;
-  if (access) {
-    const [ax, az] = access.point;
-    const half = access.width / 2;
-    const edgeDistances = [
-      { id: "back", distance: Math.abs(az - back), gap: [ax - half, ax + half] as [number, number] },
-      { id: "front", distance: Math.abs(az - front), gap: [ax - half, ax + half] as [number, number] },
-      { id: "left", distance: Math.abs(ax - left), gap: [az - half, az + half] as [number, number] },
-      { id: "right", distance: Math.abs(ax - right), gap: [az - half, az + half] as [number, number] },
-    ];
-    const nearest = edgeDistances.reduce((best, edge) => (edge.distance < best.distance ? edge : best));
-    accessEdgeId = nearest.id;
-    accessGap = nearest.gap;
-  }
-
-  const edges = [
-    { id: "back", fixed: back, edgeAxis: "z" as const, axis: "x" as const, span: [left, right] as [number, number] },
-    { id: "front", fixed: front, edgeAxis: "z" as const, axis: "x" as const, span: [left, right] as [number, number] },
-    { id: "left", fixed: left, edgeAxis: "x" as const, axis: "z" as const, span: [back, front] as [number, number] },
-    { id: "right", fixed: right, edgeAxis: "x" as const, axis: "z" as const, span: [back, front] as [number, number] },
-  ];
-
+function StairwellTrim({ segments, elevation }: { segments: RailSegment[]; elevation: number }) {
   return (
     <group>
-      {edges.flatMap((edge) => {
-        const cuts = wallCutsOnEdge(edge.fixed, edge.edgeAxis);
-        if (edge.id === accessEdgeId && accessGap) cuts.push(accessGap);
-        const segments = subtractIntervals(edge.span, cuts);
-        return segments.map((seg, i) => {
-          const center = (seg[0] + seg[1]) / 2;
-          const length = seg[1] - seg[0];
-          const position: [number, number, number] = edge.axis === "x"
-            ? [center, y, edge.fixed]
-            : [edge.fixed, y, center];
-          const size: [number, number, number] = edge.axis === "x"
-            ? [length, 0.02, 0.02]
-            : [0.02, 0.02, length];
-          return (
-            <StairwellRailEdge
-              key={`${edge.id}-${i}`}
-              position={position}
-              size={size}
-              axis={edge.axis}
-              edgeKey={`${edge.id}-${i}`}
-            />
-          );
-        });
+      {segments.map((segment) => {
+        const center = (segment.from + segment.to) / 2;
+        const length = segment.to - segment.from;
+        const position: [number, number, number] = segment.axis === "x"
+          ? [center, elevation, segment.fixed]
+          : [segment.fixed, elevation, center];
+        const size: [number, number, number] = segment.axis === "x"
+          ? [length, 0.02, 0.02]
+          : [0.02, 0.02, length];
+        return (
+          <StairwellRailEdge
+            key={segment.key}
+            position={position}
+            size={size}
+            axis={segment.axis}
+            edgeKey={segment.key}
+          />
+        );
       })}
     </group>
   );
