@@ -33,7 +33,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { ChangeEvent, Component, lazy, ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, Component, lazy, type PointerEvent as ReactPointerEvent, ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   detectPlanRegions,
   LEVEL_NAME_OPTIONS,
@@ -1001,6 +1001,8 @@ function Workspace({
   );
 }
 
+const clampNumber = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
+
 /** Counts of everything the detector claims for one region, for the focus legend. */
 function levelFindings(structure: DetectedStructure | undefined) {
   if (!structure) return null;
@@ -1043,22 +1045,99 @@ function PlanReview({
   setSelectedWallId: (id: string | null) => void;
 }) {
   const focusRegion = focusedLevel ? regions.find((region) => region.id === focusedLevel) ?? null : null;
-  // Scale the focused region up to fill the stage, then centre the leftover axis.
-  // transform-origin is the top-left corner, so the translate is expressed in
-  // percentages of the (unscaled) sheet and applied before the scale.
-  const zoom = focusRegion
-    ? (() => {
-      const scale = Math.min(1 / Math.max(0.02, focusRegion.width), 1 / Math.max(0.02, focusRegion.height));
-      const tx = -focusRegion.x + (1 - scale * focusRegion.width) / (2 * scale);
-      const ty = -focusRegion.y + (1 - scale * focusRegion.height) / (2 * scale);
-      return { transform: `scale(${scale}) translate(${tx * 100}%, ${ty * 100}%)` };
-    })()
-    : undefined;
   const findings = focusRegion ? levelFindings(structures[focusRegion.id]) : null;
+
+  // Focus mode is laid out against the measured stage rather than the source
+  // sheet: a portrait scan is only a few hundred pixels wide, so scaling inside
+  // its own box left the floor tiny. Measuring lets the chosen floor use the
+  // whole viewport whatever the sheet's proportions are.
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+
+  useEffect(() => {
+    const element = viewportRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (rect) setViewport({ width: rect.width, height: rect.height });
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [focusedLevel]);
+
+  // Entering a floor always starts from a clean, fitted view. Adjusted during
+  // render rather than in an effect so the first paint of a newly focused floor
+  // is already reset, never briefly showing the previous floor's zoom.
+  const [lastFocused, setLastFocused] = useState(focusedLevel);
+  if (focusedLevel !== lastFocused) {
+    setLastFocused(focusedLevel);
+    setZoomLevel(1);
+    setPan({ x: 0, y: 0 });
+  }
+
+  const layout = useMemo(() => {
+    if (!focusRegion || !analysisSize || viewport.width < 20 || viewport.height < 20) return null;
+    const regionWidth = Math.max(0.02, focusRegion.width);
+    const regionHeight = Math.max(0.02, focusRegion.height);
+    const padding = 20;
+    const availableWidth = Math.max(60, viewport.width - padding * 2);
+    const availableHeight = Math.max(60, viewport.height - padding * 2);
+    // Widest sheet whose region still fits both axes of the stage.
+    const fittedSheetWidth = Math.min(
+      availableWidth / regionWidth,
+      (availableHeight * analysisSize.width) / (regionHeight * analysisSize.height),
+    );
+    const sheetWidth = fittedSheetWidth * zoomLevel;
+    const sheetHeight = sheetWidth * (analysisSize.height / analysisSize.width);
+    const limitX = sheetWidth / 2;
+    const limitY = sheetHeight / 2;
+    const panX = clampNumber(pan.x, -limitX, limitX);
+    const panY = clampNumber(pan.y, -limitY, limitY);
+    const left = (viewport.width - regionWidth * sheetWidth) / 2 - focusRegion.x * sheetWidth + panX;
+    const top = (viewport.height - regionHeight * sheetHeight) / 2 - focusRegion.y * sheetHeight + panY;
+    return {
+      sheet: { width: `${sheetWidth}px`, height: `${sheetHeight}px`, left: `${left}px`, top: `${top}px` },
+      // Dims everything outside the chosen floor, so only it reads as in scope.
+      mask: {
+        left: `${left + focusRegion.x * sheetWidth}px`,
+        top: `${top + focusRegion.y * sheetHeight}px`,
+        width: `${regionWidth * sheetWidth}px`,
+        height: `${regionHeight * sheetHeight}px`,
+      },
+    };
+  }, [focusRegion, analysisSize, viewport, zoomLevel, pan]);
+
+  const beginPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!focusRegion) return;
+    dragRef.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const movePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    setPan({ x: drag.panX + (event.clientX - drag.x), y: drag.panY + (event.clientY - drag.y) });
+  };
+  const endPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  const nudgeZoom = (factor: number) => setZoomLevel((current) => clampNumber(current * factor, 1, 8));
 
   return (
     <div className={`plan-review ${imageUrl ? "has-image" : "sample-review"} ${focusRegion ? "focused" : ""}`}>
-      <div className="plan-zoom" style={zoom}>
+      <div
+        className="plan-viewport"
+        ref={viewportRef}
+        onPointerDown={focusRegion ? beginPan : undefined}
+        onPointerMove={focusRegion ? movePan : undefined}
+        onPointerUp={focusRegion ? endPan : undefined}
+        onPointerCancel={focusRegion ? endPan : undefined}
+        onWheel={focusRegion ? (event) => nudgeZoom(event.deltaY > 0 ? 0.9 : 1.1) : undefined}
+      >
+      <div className="plan-zoom" style={layout?.sheet}>
       {imageUrl ? <img src={imageUrl} alt="Uploaded floorplan" /> : <SampleSheet />}
       {analysisSize && (
         <svg
@@ -1157,11 +1236,12 @@ function PlanReview({
           )) ?? [])}
         </svg>
       )}
+      {!focusRegion && (
       <div className="region-overlay">
         {regions.map((region, index) => (
           <div
             key={region.id}
-            className={`region-box ${activeLevel === region.id ? "active" : ""} ${focusedLevel === region.id ? "focused" : ""}`}
+            className={`region-box ${activeLevel === region.id ? "active" : ""}`}
             style={{ left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%` }}
             role="button"
             tabIndex={0}
@@ -1173,28 +1253,43 @@ function PlanReview({
             <em>{Math.round(region.confidence * 100)}%</em>
             <button
               className="region-expand"
-              aria-label={focusedLevel === region.id ? `Show all levels` : `Expand ${region.name} in detail`}
+              aria-label={`Expand ${region.name} in detail`}
               onClick={(event) => {
                 event.stopPropagation();
                 setActiveLevel(region.id);
-                setFocusedLevel(focusedLevel === region.id ? null : region.id);
+                setFocusedLevel(region.id);
               }}
             >
-              {focusedLevel === region.id ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+              <Maximize2 size={13} />
             </button>
           </div>
         ))}
       </div>
+      )}
+      </div>
+      {layout && <div className="focus-mask" style={layout.mask} />}
       </div>
 
       {focusRegion && findings && (
-        <div className="focus-legend">
+        <aside className="focus-legend">
           <div className="focus-legend-head">
             <div>
               <small>REVIEWING</small>
               <strong>{focusRegion.name}</strong>
             </div>
             <button onClick={() => setFocusedLevel(null)} aria-label="Show all levels"><Minimize2 size={14} /> Show all</button>
+          </div>
+          <div className="focus-zoom" role="group" aria-label="Zoom">
+            <button onClick={() => nudgeZoom(1 / 1.35)} aria-label="Zoom out" disabled={zoomLevel <= 1.001}>−</button>
+            <span>{Math.round(zoomLevel * 100)}%</span>
+            <button onClick={() => nudgeZoom(1.35)} aria-label="Zoom in" disabled={zoomLevel >= 7.99}>+</button>
+            <button
+              className="focus-zoom-reset"
+              onClick={() => { setZoomLevel(1); setPan({ x: 0, y: 0 }); }}
+              disabled={zoomLevel <= 1.001 && pan.x === 0 && pan.y === 0}
+            >
+              Reset
+            </button>
           </div>
           <ul>
             <li><i className="k-wall" /><span>Structural walls</span><b>{findings.heavyWalls}</b></li>
@@ -1207,8 +1302,8 @@ function PlanReview({
             <li><i className="k-room" /><span>Enclosed rooms</span><b>{findings.rooms}</b></li>
             <li><i className="k-fixture" /><span>Fixtures</span><b>{findings.fixtures}</b></li>
           </ul>
-          <p>Counts come from accepted pixel evidence. Anything ambiguous is left out rather than guessed.</p>
-        </div>
+          <p>Counts come from accepted pixel evidence. Anything ambiguous is left out rather than guessed. Drag the plan to move it.</p>
+        </aside>
       )}
       {analysisSize && !focusRegion && <div className="detection-legend"><span className="wall" />Walls <span className="opening" />Doors/windows <span className="stair" />Stairs <span className="outdoor" />Balcony</div>}
     </div>

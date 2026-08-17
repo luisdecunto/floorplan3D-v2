@@ -2276,18 +2276,33 @@ function markBalustradeSpans(
   const SAMPLES = 60;
   const MIN_THIN_FRACTION = 0.15;
   const MIN_THICK_FRACTION = 0.15;
-  // Minimum rail span length in pixels. Filters out small noise detections (e.g. a
-  // short thin section at a T-junction). A real balustrade spans most of the opening.
-  const MIN_SPAN_PX = wallThickness * 5;
+  // A balustrade run is a meaningful share of its wall AND long enough to be
+  // more than a stroke artefact. Expressed as a fraction first: an absolute
+  // pixel floor alone rejects short walls that exist only to edge the stairwell,
+  // which is exactly where balustrades live.
+  const MIN_SPAN_FRACTION = 0.2;
+  const MIN_SPAN_PX = wallThickness * 2;
 
   return walls.map((wall) => {
     const wallCenterCoord = wall.axis === "vertical"
       ? (wall.start[0] + wall.end[0]) / 2
       : (wall.start[1] + wall.end[1]) / 2;
 
-    const onEdge = stairs.some((stair) => wall.axis === "vertical"
-      ? (Math.abs(wallCenterCoord - stair.x) <= STAIR_TOLERANCE || Math.abs(wallCenterCoord - (stair.x + stair.width)) <= STAIR_TOLERANCE)
-      : (Math.abs(wallCenterCoord - stair.y) <= STAIR_TOLERANCE || Math.abs(wallCenterCoord - (stair.y + stair.height)) <= STAIR_TOLERANCE));
+    const wallRunFrom = wall.axis === "vertical" ? Math.min(wall.start[1], wall.end[1]) : Math.min(wall.start[0], wall.end[0]);
+    const wallRunTo = wall.axis === "vertical" ? Math.max(wall.start[1], wall.end[1]) : Math.max(wall.start[0], wall.end[0]);
+
+    const onEdge = stairs.some((stair) => {
+      const nearSide = wall.axis === "vertical"
+        ? (Math.abs(wallCenterCoord - stair.x) <= STAIR_TOLERANCE || Math.abs(wallCenterCoord - (stair.x + stair.width)) <= STAIR_TOLERANCE)
+        : (Math.abs(wallCenterCoord - stair.y) <= STAIR_TOLERANCE || Math.abs(wallCenterCoord - (stair.y + stair.height)) <= STAIR_TOLERANCE);
+      if (!nearSide) return false;
+      // Sharing the stair's line is not enough — a wall directly above or below
+      // the shaft does that too. It must actually run alongside the stair.
+      const stairFrom = wall.axis === "vertical" ? stair.y : stair.x;
+      const stairTo = wall.axis === "vertical" ? stair.y + stair.height : stair.x + stair.width;
+      const overlap = Math.min(wallRunTo, stairTo) - Math.max(wallRunFrom, stairFrom);
+      return overlap >= (stairTo - stairFrom) * 0.5;
+    });
 
     if (!onEdge) return wall;
 
@@ -2309,6 +2324,9 @@ function markBalustradeSpans(
     if (thinCount < SAMPLES * MIN_THIN_FRACTION || thickCount < SAMPLES * MIN_THICK_FRACTION) return wall;
 
     const runLength = Math.abs(runEnd - runStart);
+    const longEnough = (from: number, to: number) => (
+      to - from >= MIN_SPAN_FRACTION && (to - from) * runLength >= MIN_SPAN_PX
+    );
     const railSpans: Array<[number, number]> = [];
     let spanStart: number | null = null;
     for (let i = 0; i < SAMPLES; i += 1) {
@@ -2317,11 +2335,11 @@ function markBalustradeSpans(
       if (thin) {
         if (spanStart === null) spanStart = frac;
       } else if (spanStart !== null) {
-        if ((frac - spanStart) * runLength >= MIN_SPAN_PX) railSpans.push([spanStart, frac]);
+        if (longEnough(spanStart, frac)) railSpans.push([spanStart, frac]);
         spanStart = null;
       }
     }
-    if (spanStart !== null && (1 - spanStart) * runLength >= MIN_SPAN_PX) railSpans.push([spanStart, 1]);
+    if (spanStart !== null && longEnough(spanStart, 1)) railSpans.push([spanStart, 1]);
 
     return railSpans.length ? { ...wall, railSpans } : wall;
   });

@@ -1012,29 +1012,85 @@ select:focus-visible {
 .region-expand:hover { background: var(--acid); }
 .region-box.focused { border-color: var(--ink); box-shadow: 0 0 0 3px var(--acid); }
 
-/* Focus/expand: the sheet scales inside the stage, the legend sits over it.
-   The wrapper is in normal flow so the image still drives the sheet's size
-   (.plan-review.has-image is content-sized); overlays position against it. */
-.plan-zoom {
-  position: relative;
-  transform-origin: 0 0;
-  transition: transform 260ms cubic-bezier(0.4, 0, 0.2, 1);
-}
+/* Browsing mode: the wrapper stays in normal flow so the image drives the
+   sheet's size (.plan-review.has-image is content-sized). */
+.plan-viewport { position: relative; }
+.plan-zoom { position: relative; }
+.plan-review.sample-review .plan-viewport,
 .plan-review.sample-review .plan-zoom { width: 100%; height: 100%; }
-.plan-review.focused .region-overlay .region-box:not(.focused) { opacity: 0.25; }
-.focus-legend {
+
+/* Focus mode: the sheet is positioned against the measured stage instead of
+   its own intrinsic size, so a narrow portrait scan still fills the space. The
+   legend is a real column beside the drawing, never on top of it. */
+.plan-review.focused {
   position: absolute;
-  left: 10px;
-  bottom: 10px;
-  z-index: 5;
-  width: 190px;
-  max-height: calc(100% - 20px);
-  overflow-y: auto;
-  padding: 9px 10px 8px;
-  background: rgba(255, 254, 250, 0.96);
-  border: 1px solid var(--ink);
-  box-shadow: 4px 4px 0 rgba(23, 24, 20, 0.13);
+  inset: 12px;
+  left: 12px;
+  top: 12px;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  transform: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 212px;
+  overflow: hidden;
 }
+.plan-review.focused .plan-viewport {
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  background: #f6f5f0;
+}
+.plan-review.focused .plan-viewport:active { cursor: grabbing; }
+.plan-review.focused .plan-zoom { position: absolute; }
+.plan-review.focused .plan-zoom > img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: fill;
+  pointer-events: none;
+}
+/* Dims the rest of the sheet so only the chosen floor reads as in scope. */
+.focus-mask {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  outline: 1px solid rgba(23, 24, 20, 0.55);
+  box-shadow: 0 0 0 9999px rgba(238, 236, 228, 0.82);
+}
+.focus-legend {
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 11px 9px;
+  background: var(--white);
+  border-left: 1px solid var(--ink);
+}
+.focus-zoom {
+  display: grid;
+  grid-template-columns: 26px 1fr 26px auto;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.focus-zoom button {
+  height: 24px;
+  background: var(--white);
+  border: 1px solid var(--ink);
+  color: var(--ink);
+  cursor: pointer;
+  font: 800 12px ui-monospace, monospace;
+  line-height: 1;
+  padding: 0;
+}
+.focus-zoom button:disabled { opacity: 0.32; cursor: default; }
+.focus-zoom button:not(:disabled):hover { background: var(--acid); }
+.focus-zoom span { text-align: center; font: 800 9px ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.focus-zoom-reset { padding: 0 7px !important; font-size: 8px !important; letter-spacing: 0.06em; }
 .focus-legend-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; margin-bottom: 7px; }
 .focus-legend-head small { display: block; font: 800 7px ui-monospace, monospace; letter-spacing: 0.14em; color: #7a7a72; }
 .focus-legend-head strong { display: block; font-size: 11px; font-weight: 850; line-height: 1.25; }
@@ -1359,6 +1415,20 @@ select:focus-visible {
   .plan-review { width: 94%; height: min(78%, 620px); }
   .plan-review.has-image { max-width: 94%; max-height: 82%; }
   .plan-zoom > img { max-height: calc(100dvh - 190px); }
+  /* Focus mode stacks on a phone: plan on top, legend as a short sheet below,
+     so neither covers the other. */
+  .plan-review.focused {
+    inset: 8px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .plan-review.focused .focus-legend {
+    border-left: 0;
+    border-top: 1px solid var(--ink);
+    max-height: 38vh;
+  }
+  .plan-review.focused .focus-legend li { padding: 2px 0; font-size: 8.5px; }
+  .plan-review.focused .focus-legend p { display: none; }
   .region-box > strong { bottom: 6px; left: 6px; font-size: 8px; }
   .region-box > em { display: none; }
   .sheet-plan { top: 16%; width: 43%; height: 62%; }
