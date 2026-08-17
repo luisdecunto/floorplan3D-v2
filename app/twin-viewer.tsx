@@ -33,6 +33,10 @@ export default function TwinViewer({
   const stairConnections = buildStairConnections(levels, explodeDistance);
   const stairOpenings = new Map(stairConnections.map((connection) => [connection.upperLevelId, connection.opening]));
   const footprint = sceneFootprint(levels);
+  // Where the top flight lands on the upper floor: the rail must leave this
+  // edge open, otherwise the stairwell is fenced off and the floor is
+  // unreachable from the stairs.
+  const stairAccess = new Map(stairConnections.map((connection) => [connection.upperLevelId, connection.upperFlight.end]));
   return (
     <div className="twin-canvas">
       <Canvas shadows dpr={[1, 1.75]} camera={{ position: [footprint.centerX + 12, 10, footprint.centerZ + 14], fov: 36, near: 0.1, far: 100 }}>
@@ -45,6 +49,7 @@ export default function TwinViewer({
               key={level.id}
               level={level}
               opening={index > 0 ? stairOpenings.get(level.id) ?? stairwellOpening(level) : null}
+              accessPoint={index > 0 ? stairAccess.get(level.id) ?? null : null}
               explodeOffset={index * explodeDistance}
               wallCutaway={wallCutaway}
             />
@@ -67,11 +72,13 @@ export default function TwinViewer({
 function LevelModel({
   level,
   opening,
+  accessPoint,
   explodeOffset,
   wallCutaway,
 }: {
   level: Level;
   opening: StairwellOpening | null;
+  accessPoint: [number, number] | null;
   explodeOffset: number;
   wallCutaway: number;
 }) {
@@ -81,7 +88,7 @@ function LevelModel({
     <group>
       {pieces.map((piece) => <SlabPieceModel key={piece.id} piece={piece} elevation={y} />)}
       {level.floorTextureUrl && <PlanFloor level={level} pieces={pieces} elevation={y} />}
-      {opening && <StairwellTrim opening={opening} elevation={y} walls={level.walls} />}
+      {opening && <StairwellTrim opening={opening} elevation={y} walls={level.walls} accessPoint={accessPoint} />}
       {(level.outdoorAreas ?? []).map((area) => <OutdoorAreaModel key={area.id} area={area} elevation={y} />)}
       {(level.fixtures ?? []).map((fixture) => <FurnitureModel key={fixture.id} fixture={fixture} elevation={y} />)}
       {level.walls.map((wall) => <WallModel key={wall.id} wall={wall} elevation={y} levelHeight={level.ceilingHeight} wallCutaway={wallCutaway} />)}
@@ -182,10 +189,12 @@ function StairwellTrim({
   opening,
   elevation,
   walls,
+  accessPoint,
 }: {
   opening: StairwellOpening;
   elevation: number;
   walls: Wall[];
+  accessPoint: [number, number] | null;
 }) {
   const wallTolerance = 0.32;
   // Determine which edges already have a structural wall running along them so
@@ -223,6 +232,20 @@ function StairwellTrim({
   const back = opening.z - opening.depth / 2;
   const front = opening.z + opening.depth / 2;
   const y = elevation;
+
+  // The edge where the top flight lands must stay open so the floor is
+  // reachable from the stairs. Pick the opening edge nearest the access point.
+  let accessEdgeId: string | null = null;
+  if (accessPoint) {
+    const [ax, az] = accessPoint;
+    const edgeDistances: Array<{ id: string; distance: number }> = [
+      { id: "back", distance: Math.abs(az - back) },
+      { id: "front", distance: Math.abs(az - front) },
+      { id: "left", distance: Math.abs(ax - left) },
+      { id: "right", distance: Math.abs(ax - right) },
+    ];
+    accessEdgeId = edgeDistances.reduce((nearest, edge) => (edge.distance < nearest.distance ? edge : nearest)).id;
+  }
 
   const edges = [
     {
@@ -265,7 +288,7 @@ function StairwellTrim({
 
   return (
     <group>
-      {edges.map((edge) => hasWallOnEdge(edge.edgeZ, edge.edgeAxis, edge.span) ? null : (
+      {edges.map((edge) => (edge.id === accessEdgeId || hasWallOnEdge(edge.edgeZ, edge.edgeAxis, edge.span)) ? null : (
         <StairwellRailEdge
           key={edge.id}
           position={edge.position}
