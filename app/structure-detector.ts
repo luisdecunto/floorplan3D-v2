@@ -1322,7 +1322,7 @@ function trimUnsupportedInteriorWallTails(
   height: number,
   minimumRun: number,
   footprint: Bounds,
-) {
+): DetectedWall[] {
   return walls.map((wall) => {
     const from = wall.axis === "horizontal" ? wall.start[0] : wall.start[1];
     const to = wall.axis === "horizontal" ? wall.end[0] : wall.end[1];
@@ -2152,6 +2152,75 @@ export function inspectStructureEvidence(
   return { bounds, threshold, strongMask, mediumMask, windowMask, rawSegments, wallThickness, lightWallThickness, structural, mediumCandidates, minimumDimension, minimumRun };
 }
 
+/**
+ * Trim a detected stair box back to the walls that actually enclose its shaft.
+ *
+ * `detectStairs` builds its box from pairs of long parallel "rail" strokes, so
+ * regularly-spaced linework in an adjacent room — closet shelving is the common
+ * case, its shelves look exactly like treads — can be paired with a real stair
+ * rail and stretch the box across the dividing wall. The stair then reads as
+ * wider than it is, which in turn puts the stairwell opening (and therefore the
+ * railing around it) in the wrong place.
+ *
+ * A stair shaft is physically bounded by the walls around it, so any wall lying
+ * strictly inside the box, parallel to the run and spanning it, is a boundary
+ * the stair cannot cross. Clamp the box to the outermost such wall on each side.
+ *
+ * Deliberately conservative — a side is only pulled in when the wall spans
+ * essentially the whole box, extends past it (proving it is a building wall
+ * rather than a stringer belonging to the stair itself), and leaves a box still
+ * large enough to be a stair. Fallback in every other case: the box is unchanged.
+ */
+function clampStairsToFlankingWalls(
+  stairs: DetectedStair[],
+  walls: DetectedWall[],
+  wallThickness: number,
+): DetectedStair[] {
+  if (!stairs.length || !walls.length) return stairs;
+  const MIN_SPAN_COVERAGE = 0.9;   // the wall must span ~all of the stair's run
+  const MIN_OVERHANG = wallThickness * 0.5; // and continue past it on some side
+  const MIN_REMAINING = 0.55;      // never shrink a side below this of the original
+
+  return stairs.map((stair) => {
+    const vertical = stair.runAxis === "vertical";
+    // Cross axis = perpendicular to the run. Walls bounding the shaft run
+    // parallel to the stair's run, so they share its axis.
+    const crossMin = vertical ? stair.x : stair.y;
+    const crossMax = vertical ? stair.x + stair.width : stair.y + stair.height;
+    const runMin = vertical ? stair.y : stair.x;
+    const runMax = vertical ? stair.y + stair.height : stair.x + stair.width;
+    const crossCenter = (crossMin + crossMax) / 2;
+    const originalCross = crossMax - crossMin;
+    const inset = wallThickness * 0.75; // ignore walls sitting on the box edge
+
+    let newMin = crossMin;
+    let newMax = crossMax;
+
+    for (const wall of walls) {
+      if (wall.axis !== stair.runAxis) continue;
+      const line = vertical ? (wall.start[0] + wall.end[0]) / 2 : (wall.start[1] + wall.end[1]) / 2;
+      if (line <= crossMin + inset || line >= crossMax - inset) continue;
+
+      const wallRunFrom = Math.min(vertical ? wall.start[1] : wall.start[0], vertical ? wall.end[1] : wall.end[0]);
+      const wallRunTo = Math.max(vertical ? wall.start[1] : wall.start[0], vertical ? wall.end[1] : wall.end[0]);
+      const overlap = Math.max(0, Math.min(wallRunTo, runMax) - Math.max(wallRunFrom, runMin));
+      if (overlap < (runMax - runMin) * MIN_SPAN_COVERAGE) continue;
+      // A stringer or tread edge stops with the stair; a real wall runs past it.
+      if (wallRunFrom > runMin - MIN_OVERHANG && wallRunTo < runMax + MIN_OVERHANG) continue;
+
+      if (line < crossCenter) newMin = Math.max(newMin, line);
+      else newMax = Math.min(newMax, line);
+    }
+
+    if (newMax - newMin >= originalCross - 0.5) return stair;
+    if (newMax - newMin < originalCross * MIN_REMAINING) return stair;
+
+    return vertical
+      ? { ...stair, x: newMin, width: newMax - newMin }
+      : { ...stair, y: newMin, height: newMax - newMin };
+  });
+}
+
 /** Ink thickness perpendicular to the wall's run at position `p` along the run.
  *  Samples three adjacent run rows and returns the median count for robustness. */
 function localThicknessAt(
@@ -2297,8 +2366,14 @@ function detectFloorStructureAligned(
     height,
     footprintBounds,
   );
-  const stairs = detectStairs(rawSegments, mediumMask, width, height, footprintBounds, minimumDimension, wallThickness);
-  const walledWithRails = markBalustradeSpans(walls as DetectedWall[], stairs, mediumMask, width, height, wallThickness);
+  // Trim stair boxes that swallowed adjacent-room linework before anything
+  // downstream (stairwell opening, railings, obstacles) is derived from them.
+  const stairs = clampStairsToFlankingWalls(
+    detectStairs(rawSegments, mediumMask, width, height, footprintBounds, minimumDimension, wallThickness),
+    walls,
+    wallThickness,
+  );
+  const walledWithRails = markBalustradeSpans(walls, stairs, mediumMask, width, height, wallThickness);
   const openingCount = walledWithRails.reduce((sum, wall) => sum + wall.openings.length, 0);
   const topologyVotes = walledWithRails.filter((wall) => walledWithRails.some((other) => other !== wall && (
     Math.hypot(wall.start[0] - other.start[0], wall.start[1] - other.start[1]) <= wallThickness * 2.5

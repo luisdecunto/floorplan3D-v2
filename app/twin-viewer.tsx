@@ -73,6 +73,48 @@ export default function TwinViewer({
   );
 }
 
+/**
+ * Keep only the rail spans that sit on an edge of the stairwell opening.
+ *
+ * A rail span removes solid wall geometry, and only `StairwellTrim` puts a
+ * railing back — and it only rails the opening perimeter. A span anywhere else
+ * would leave an unexplained hole in a wall, so those are dropped and the wall
+ * renders solid. With no opening at all (any floor without a stairwell above),
+ * every span is dropped.
+ */
+function activateRailSpans(walls: Wall[], opening: StairwellOpening | null): Wall[] {
+  if (!opening) return walls.map((wall) => (wall.railSpans ? { ...wall, railSpans: undefined } : wall));
+  const tolerance = 0.36;
+  const left = opening.x - opening.width / 2;
+  const right = opening.x + opening.width / 2;
+  const back = opening.z - opening.depth / 2;
+  const front = opening.z + opening.depth / 2;
+
+  return walls.map((wall) => {
+    if (!wall.railSpans?.length) return wall;
+    const isVertical = Math.abs(wall.end[0] - wall.start[0]) < Math.abs(wall.end[1] - wall.start[1]);
+    const lineCoord = isVertical ? (wall.start[0] + wall.end[0]) / 2 : (wall.start[1] + wall.end[1]) / 2;
+    // The wall must lie along one of the two opening edges parallel to it.
+    const onEdge = isVertical
+      ? (Math.abs(lineCoord - left) <= tolerance || Math.abs(lineCoord - right) <= tolerance)
+      : (Math.abs(lineCoord - back) <= tolerance || Math.abs(lineCoord - front) <= tolerance);
+    if (!onEdge) return { ...wall, railSpans: undefined };
+
+    // …and each span must overlap the opening's extent along that edge.
+    const wallLength = Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1]);
+    if (wallLength < 0.01) return { ...wall, railSpans: undefined };
+    const runStart = isVertical ? wall.start[1] : wall.start[0];
+    const dRun = isVertical ? wall.end[1] - wall.start[1] : wall.end[0] - wall.start[0];
+    const [spanLo, spanHi] = isVertical ? [back, front] : [left, right];
+    const kept = wall.railSpans.filter(([from, to]) => {
+      const a = runStart + dRun * (from / wallLength);
+      const b = runStart + dRun * (to / wallLength);
+      return Math.min(a, b) < spanHi + tolerance && Math.max(a, b) > spanLo - tolerance;
+    });
+    return kept.length ? { ...wall, railSpans: kept } : { ...wall, railSpans: undefined };
+  });
+}
+
 function LevelModel({
   level,
   opening,
@@ -88,14 +130,17 @@ function LevelModel({
 }) {
   const y = level.elevation + explodeOffset;
   const pieces = slabPieces(level, opening);
+  // Walls and the stairwell trim must agree on which spans are railing, so both
+  // read from the same filtered list.
+  const walls = useMemo(() => activateRailSpans(level.walls, opening), [level.walls, opening]);
   return (
     <group>
       {pieces.map((piece) => <SlabPieceModel key={piece.id} piece={piece} elevation={y} />)}
       {level.floorTextureUrl && <PlanFloor level={level} pieces={pieces} elevation={y} />}
-      {opening && <StairwellTrim opening={opening} elevation={y} walls={level.walls} access={access} />}
+      {opening && <StairwellTrim opening={opening} elevation={y} walls={walls} access={access} />}
       {(level.outdoorAreas ?? []).map((area) => <OutdoorAreaModel key={area.id} area={area} elevation={y} />)}
       {(level.fixtures ?? []).map((fixture) => <FurnitureModel key={fixture.id} fixture={fixture} elevation={y} />)}
-      {level.walls.map((wall) => <WallModel key={wall.id} wall={wall} elevation={y} levelHeight={level.ceilingHeight} wallCutaway={wallCutaway} />)}
+      {walls.map((wall) => <WallModel key={wall.id} wall={wall} elevation={y} levelHeight={level.ceilingHeight} wallCutaway={wallCutaway} />)}
     </group>
   );
 }

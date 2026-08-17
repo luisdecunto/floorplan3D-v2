@@ -18,6 +18,7 @@ import {
   Layers3,
   Maximize2,
   Menu,
+  Minimize2,
   MoreHorizontal,
   Move3D,
   Ruler,
@@ -192,6 +193,7 @@ export default function Home() {
   const [structures, setStructures] = useState<StructureMap>({});
   const [analysisSize, setAnalysisSize] = useState<AnalysisSize | null>(null);
   const [activeLevel, setActiveLevel] = useState("ground");
+  const [focusedLevel, setFocusedLevel] = useState<string | null>(null);
   const [visibleLevels, setVisibleLevels] = useState(() => new Set(["ground", "upper"]));
   const [exploded, setExploded] = useState(false);
   const [wallCutaway, setWallCutaway] = useState(1);
@@ -503,6 +505,7 @@ export default function Home() {
         confirmLevel={confirmLevel}
         document={document}
         exploded={exploded}
+        focusedLevel={focusedLevel}
         imageUrl={imageUrl}
         measureScale={measureScale}
         mobilePanel={mobilePanel}
@@ -521,6 +524,7 @@ export default function Home() {
         structures={structures}
         setActiveLevel={setActiveLevel}
         setExploded={setExploded}
+        setFocusedLevel={setFocusedLevel}
         setMobilePanel={setMobilePanel}
         setSelectedWallId={setSelectedWallId}
         setStage={setStage}
@@ -626,6 +630,7 @@ function Workspace({
   confirmLevel,
   document,
   exploded,
+  focusedLevel,
   imageUrl,
   measureScale,
   mobilePanel,
@@ -644,6 +649,7 @@ function Workspace({
   structures,
   setActiveLevel,
   setExploded,
+  setFocusedLevel,
   setMobilePanel,
   setSelectedWallId,
   setStage,
@@ -663,6 +669,7 @@ function Workspace({
   confirmLevel: () => void;
   document: FloorplanDocumentV2 | null;
   exploded: boolean;
+  focusedLevel: string | null;
   imageUrl: string | null;
   measureScale: () => void;
   mobilePanel: "levels" | "canvas" | "details";
@@ -681,6 +688,7 @@ function Workspace({
   structures: StructureMap;
   setActiveLevel: (id: string) => void;
   setExploded: (value: boolean) => void;
+  setFocusedLevel: (id: string | null) => void;
   setMobilePanel: (panel: "levels" | "canvas" | "details") => void;
   setSelectedWallId: (id: string | null) => void;
   setStage: (stage: AppStage) => void;
@@ -791,14 +799,33 @@ function Workspace({
                 structures={structures}
                 analysisSize={analysisSize}
                 activeLevel={activeLevel}
+                focusedLevel={focusedLevel}
                 selectedWallId={selectedWallId}
                 setActiveLevel={setActiveLevel}
+                setFocusedLevel={setFocusedLevel}
                 setSelectedWallId={setSelectedWallId}
               />
             ) : (
               <Suspense fallback={<div className="viewer-loading"><Box size={22} /><span>Building the 3D twin…</span></div>}>
                 <TwinViewer exploded={exploded} levels={previewLevels} visibleLevels={visibleLevels} wallCutaway={wallCutaway} />
               </Suspense>
+            )}
+            {/* Floor visibility lives beside the model on mobile, where the level
+                rail is a separate tab and toggling there hides the result. */}
+            {viewMode === "twin" && regions.length > 1 && (
+              <div className="floor-visibility mobile-only" role="group" aria-label="Floor visibility">
+                {regions.map((region, index) => (
+                  <button
+                    key={region.id}
+                    className={visibleLevels.has(region.id) ? "on" : ""}
+                    aria-pressed={visibleLevels.has(region.id)}
+                    onClick={() => toggleLevel(region.id)}
+                  >
+                    {visibleLevels.has(region.id) ? <Eye size={13} /> : <EyeOff size={13} />}
+                    <span>{index === 0 ? "BASE" : `${index}F`}</span>
+                  </button>
+                ))}
+              </div>
             )}
             {viewMode === "twin" && (
               <label className="wall-opacity-control">
@@ -938,14 +965,34 @@ function Workspace({
   );
 }
 
+/** Counts of everything the detector claims for one region, for the focus legend. */
+function levelFindings(structure: DetectedStructure | undefined) {
+  if (!structure) return null;
+  const openings = structure.walls.flatMap((wall) => wall.openings);
+  return {
+    heavyWalls: structure.walls.filter((wall) => wall.weight === "heavy").length,
+    lightWalls: structure.walls.filter((wall) => wall.weight === "light").length,
+    doors: openings.filter((opening) => opening.kind === "door").length,
+    windows: openings.filter((opening) => opening.kind === "window").length,
+    stairs: structure.stairs.length,
+    steps: structure.stairs.reduce((sum, stair) => sum + stair.stepCount, 0),
+    rails: structure.walls.reduce((sum, wall) => sum + (wall.railSpans?.length ?? 0), 0),
+    outdoor: structure.outdoorAreas.length,
+    rooms: structure.rooms.length,
+    fixtures: structure.fixtures?.length ?? 0,
+  };
+}
+
 function PlanReview({
   imageUrl,
   regions,
   structures,
   analysisSize,
   activeLevel,
+  focusedLevel,
   selectedWallId,
   setActiveLevel,
+  setFocusedLevel,
   setSelectedWallId,
 }: {
   imageUrl: string | null;
@@ -953,12 +1000,29 @@ function PlanReview({
   structures: StructureMap;
   analysisSize: AnalysisSize | null;
   activeLevel: string;
+  focusedLevel: string | null;
   selectedWallId: string | null;
   setActiveLevel: (id: string) => void;
+  setFocusedLevel: (id: string | null) => void;
   setSelectedWallId: (id: string | null) => void;
 }) {
+  const focusRegion = focusedLevel ? regions.find((region) => region.id === focusedLevel) ?? null : null;
+  // Scale the focused region up to fill the stage, then centre the leftover axis.
+  // transform-origin is the top-left corner, so the translate is expressed in
+  // percentages of the (unscaled) sheet and applied before the scale.
+  const zoom = focusRegion
+    ? (() => {
+      const scale = Math.min(1 / Math.max(0.02, focusRegion.width), 1 / Math.max(0.02, focusRegion.height));
+      const tx = -focusRegion.x + (1 - scale * focusRegion.width) / (2 * scale);
+      const ty = -focusRegion.y + (1 - scale * focusRegion.height) / (2 * scale);
+      return { transform: `scale(${scale}) translate(${tx * 100}%, ${ty * 100}%)` };
+    })()
+    : undefined;
+  const findings = focusRegion ? levelFindings(structures[focusRegion.id]) : null;
+
   return (
-    <div className={`plan-review ${imageUrl ? "has-image" : "sample-review"}`}>
+    <div className={`plan-review ${imageUrl ? "has-image" : "sample-review"} ${focusRegion ? "focused" : ""}`}>
+      <div className="plan-zoom" style={zoom}>
       {imageUrl ? <img src={imageUrl} alt="Uploaded floorplan" /> : <SampleSheet />}
       {analysisSize && (
         <svg
@@ -1059,20 +1123,58 @@ function PlanReview({
       )}
       <div className="region-overlay">
         {regions.map((region, index) => (
-          <button
+          <div
             key={region.id}
-            className={`region-box ${activeLevel === region.id ? "active" : ""}`}
+            className={`region-box ${activeLevel === region.id ? "active" : ""} ${focusedLevel === region.id ? "focused" : ""}`}
             style={{ left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%` }}
+            role="button"
+            tabIndex={0}
             onClick={() => setActiveLevel(region.id)}
+            onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setActiveLevel(region.id); }}
           >
             <span>{index + 1}</span>
             <strong>{region.name}</strong>
             <em>{Math.round(region.confidence * 100)}%</em>
-            {region.hasOutdoorArea && <small>Balcony / terrace detected</small>}
-          </button>
+            <button
+              className="region-expand"
+              aria-label={focusedLevel === region.id ? `Show all levels` : `Expand ${region.name} in detail`}
+              onClick={(event) => {
+                event.stopPropagation();
+                setActiveLevel(region.id);
+                setFocusedLevel(focusedLevel === region.id ? null : region.id);
+              }}
+            >
+              {focusedLevel === region.id ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            </button>
+          </div>
         ))}
       </div>
-      {analysisSize && <div className="detection-legend"><span className="wall" />Walls <span className="opening" />Doors/windows <span className="stair" />Stairs <span className="outdoor" />Balcony</div>}
+      </div>
+
+      {focusRegion && findings && (
+        <div className="focus-legend">
+          <div className="focus-legend-head">
+            <div>
+              <small>REVIEWING</small>
+              <strong>{focusRegion.name}</strong>
+            </div>
+            <button onClick={() => setFocusedLevel(null)} aria-label="Show all levels"><Minimize2 size={14} /> Show all</button>
+          </div>
+          <ul>
+            <li><i className="k-wall" /><span>Structural walls</span><b>{findings.heavyWalls}</b></li>
+            <li><i className="k-light" /><span>Thin partitions</span><b>{findings.lightWalls}</b></li>
+            <li><i className="k-door" /><span>Doors</span><b>{findings.doors}</b></li>
+            <li><i className="k-window" /><span>Windows</span><b>{findings.windows}</b></li>
+            <li><i className="k-stair" /><span>Stairs{findings.stairs ? ` · ${findings.steps} steps` : ""}</span><b>{findings.stairs}</b></li>
+            <li><i className="k-rail" /><span>Balustrades</span><b>{findings.rails}</b></li>
+            <li><i className="k-outdoor" /><span>Balcony / terrace</span><b>{findings.outdoor}</b></li>
+            <li><i className="k-room" /><span>Enclosed rooms</span><b>{findings.rooms}</b></li>
+            <li><i className="k-fixture" /><span>Fixtures</span><b>{findings.fixtures}</b></li>
+          </ul>
+          <p>Counts come from accepted pixel evidence. Anything ambiguous is left out rather than guessed.</p>
+        </div>
+      )}
+      {analysisSize && !focusRegion && <div className="detection-legend"><span className="wall" />Walls <span className="opening" />Doors/windows <span className="stair" />Stairs <span className="outdoor" />Balcony</div>}
     </div>
   );
 }
