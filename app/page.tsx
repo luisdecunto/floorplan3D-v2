@@ -33,7 +33,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { ChangeEvent, lazy, ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, Component, lazy, ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   detectPlanRegions,
   LEVEL_NAME_OPTIONS,
@@ -166,6 +166,40 @@ function scaleCopy(scale: ProjectScale | undefined, hasSelectedWall: boolean) {
   return hasSelectedWall
     ? "Dimensions are estimated from typical door widths. Press Measure to enter this wall's real length instead."
     : "Dimensions are estimated from typical door widths, not measured. Select a wall to enter a real length instead.";
+}
+
+/**
+ * Keeps a WebGL failure legible. Without this, anything thrown while building
+ * the scene (a lost context, a driver refusing a texture, a bad asset) unmounts
+ * the tree and leaves an empty stage with no indication of what went wrong —
+ * which is indistinguishable from the viewer simply hanging.
+ */
+class ViewerBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { failed: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("3D viewer failed to start", error);
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="viewer-loading viewer-failed">
+          <Box size={22} />
+          <span>The 3D view could not start on this device.</span>
+          <button onClick={() => this.setState({ failed: false })}>Try again</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function buildPreviewLevels(regions: SourceRegion[], structures: StructureMap, sharedScale?: ProjectScale): Level[] {
@@ -806,9 +840,11 @@ function Workspace({
                 setSelectedWallId={setSelectedWallId}
               />
             ) : (
-              <Suspense fallback={<div className="viewer-loading"><Box size={22} /><span>Building the 3D twin…</span></div>}>
-                <TwinViewer exploded={exploded} levels={previewLevels} visibleLevels={visibleLevels} wallCutaway={wallCutaway} />
-              </Suspense>
+              <ViewerBoundary>
+                <Suspense fallback={<div className="viewer-loading"><Box size={22} /><span>Building the 3D twin…</span></div>}>
+                  <TwinViewer exploded={exploded} levels={previewLevels} visibleLevels={visibleLevels} wallCutaway={wallCutaway} />
+                </Suspense>
+              </ViewerBoundary>
             )}
             {/* Floor visibility lives beside the model on mobile, where the level
                 rail is a separate tab and toggling there hides the result. */}

@@ -2,9 +2,9 @@
 
 /* eslint-disable react/no-unknown-property */
 
-import { ContactShadows, Environment, OrbitControls } from "@react-three/drei";
+import { ContactShadows, OrbitControls } from "@react-three/drei";
 import { Canvas, useLoader } from "@react-three/fiber";
-import { ReactNode, useEffect, useMemo } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import { SRGBColorSpace, TextureLoader } from "three";
 import {
   buildStairConnections,
@@ -29,6 +29,12 @@ export default function TwinViewer({
   visibleLevels: Set<string>;
   wallCutaway: number;
 }) {
+  // Phones have far less GPU headroom than the desktop this was tuned on, and a
+  // stalled frame there reads as the viewer simply never appearing. Measured
+  // once on mount so it cannot churn renders.
+  const [compact] = useState(() => (
+    typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches
+  ));
   const explodeDistance = exploded ? 2.35 : 0;
   const stairConnections = buildStairConnections(levels, explodeDistance);
   const stairOpenings = new Map(stairConnections.map((connection) => [connection.upperLevelId, connection.opening]));
@@ -43,10 +49,20 @@ export default function TwinViewer({
   ]));
   return (
     <div className="twin-canvas">
-      <Canvas shadows dpr={[1, 1.75]} camera={{ position: [footprint.centerX + 12, 10, footprint.centerZ + 14], fov: 36, near: 0.1, far: 100 }}>
+      <Canvas
+        shadows={!compact}
+        dpr={compact ? [1, 1.5] : [1, 1.75]}
+        camera={{ position: [footprint.centerX + 12, 10, footprint.centerZ + 14], fov: 36, near: 0.1, far: 100 }}
+      >
         <color attach="background" args={["#ebe9e1"]} />
         <ambientLight intensity={1.25} />
-        <directionalLight position={[7, 12, 6]} intensity={2.1} castShadow shadow-mapSize={[1024, 1024]} />
+        {/* Sky/ground fill replacing drei's <Environment preset>. That helper
+            streams an HDR from an external CDN at runtime, so a slow or blocked
+            request left the whole canvas suspended with nothing on screen. All
+            lighting here is local, so the viewer never waits on the network. */}
+        <hemisphereLight args={["#f4f1e8", "#9d978a", 0.85]} />
+        <directionalLight position={[-8, 9, -6]} intensity={0.45} />
+        <directionalLight position={[7, 12, 6]} intensity={2.1} castShadow={!compact} shadow-mapSize={[1024, 1024]} />
         <group position={[0, -1.25, 0]}>
           {levels.map((level, index) => visibleLevels.has(level.id) && (
             <LevelModel
@@ -66,7 +82,6 @@ export default function TwinViewer({
           <ContactShadows position={[0, -0.03, 0]} opacity={0.24} scale={24} blur={2.8} far={12} />
         </group>
         <OrbitControls makeDefault minDistance={7} maxDistance={30} minPolarAngle={0.35} maxPolarAngle={Math.PI / 2.05} target={[footprint.centerX, 2.2, footprint.centerZ]} />
-        <Environment preset="city" environmentIntensity={0.35} />
       </Canvas>
       <div className="viewer-legend"><span><i className="legend-wall" /> Structure</span><span><i className="legend-door" /> Doors</span><span><i className="legend-window" /> Windows</span><span><i className="legend-stair" /> Stairs</span><span><i className="legend-outdoor" /> Balcony</span><span><i className="legend-fixture" /> Fixtures</span><span><i className="legend-detail" /> Plan details</span></div>
     </div>

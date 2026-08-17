@@ -1119,6 +1119,16 @@ select:focus-visible {
   font-size: 11px;
   font-weight: 800;
 }
+.viewer-failed { flex-direction: column; text-align: center; padding: 0 24px; }
+.viewer-failed button {
+  padding: 7px 12px;
+  background: var(--ink);
+  color: white;
+  border: 0;
+  cursor: pointer;
+  font: 800 9px ui-monospace, monospace;
+  letter-spacing: 0.08em;
+}
 .viewer-legend { position: absolute; top: 15px; left: 15px; max-width: calc(100% - 270px); padding: 9px 11px; background: rgba(255, 254, 250, 0.86); display: flex; flex-wrap: wrap; gap: 7px 13px; font-size: 9px; font-weight: 750; }
 .viewer-legend span { display: flex; align-items: center; gap: 6px; }
 .viewer-legend i { width: 8px; height: 8px; display: block; }
@@ -1354,8 +1364,9 @@ select:focus-visible {
   .sheet-plan { top: 16%; width: 43%; height: 62%; }
   .sheet-plan.first { left: 4%; }
   .sheet-plan.second { right: 4%; }
-  .viewer-legend { top: 10px; left: 10px; }
-  .wall-opacity-control { top: 10px; right: 10px; width: min(190px, calc(100% - 20px)); }
+  /* Floor chips take the top-left corner; the legend drops below them. */
+  .viewer-legend { top: 52px; left: 10px; max-width: calc(100% - 20px); }
+  .wall-opacity-control { top: 10px; right: 10px; width: min(160px, calc(100% - 150px)); }
 
   .mobile-nav {
     position: fixed;
