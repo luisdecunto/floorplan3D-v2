@@ -50,7 +50,14 @@ function buildOverlaySvg(width, height, structures, regions) {
 
     for (const stair of structure.stairs ?? []) {
       parts.push(`<rect x="${stair.x}" y="${stair.y}" width="${stair.width}" height="${stair.height}" fill="rgba(220,38,38,0.12)" stroke="#dc2626" stroke-width="1.5" />`);
-      parts.push(`<text x="${stair.x + 2}" y="${stair.y + 10}" font-size="9" fill="#dc2626">${stair.stepCount} steps</text>`);
+      parts.push(`<text x="${stair.x + 2}" y="${stair.y + 10}" font-size="9" fill="#dc2626">${stair.stepCount} steps${stair.ascend ? ` ↑${stair.ascend}` : ""}</text>`);
+    }
+
+    for (const fixture of structure.fixtures ?? []) {
+      const fx = fixture.x - fixture.width / 2;
+      const fy = fixture.y - fixture.height / 2;
+      parts.push(`<rect x="${fx}" y="${fy}" width="${fixture.width}" height="${fixture.height}" fill="rgba(5,150,105,0.15)" stroke="#059669" stroke-width="1.5" />`);
+      parts.push(`<text x="${fixture.x}" y="${fixture.y}" font-size="8" fill="#047857" text-anchor="middle">${escapeAttr(fixture.kind)}</text>`);
     }
 
     for (const room of structure.rooms ?? []) {

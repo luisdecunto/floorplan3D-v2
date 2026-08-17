@@ -371,24 +371,57 @@ function deduplicateFixtures(fixtures: DetectedFixture[]): DetectedFixture[] {
 }
 
 /**
- * Top-level entry point. Runs all detectors, deduplicates across types,
- * and returns at most `maxFixtures` results.
+ * A rectangle the furniture detector must avoid. Stair shafts (their treads
+ * read as a grid of small boxes) and wall corridors (their corners read as
+ * bordered boxes) are the dominant false-positive sources, so both are passed
+ * in as obstacles and any fixture overlapping one is dropped.
+ */
+export type FixtureObstacle = { minX: number; minY: number; maxX: number; maxY: number };
+
+/** True when a fixture's box overlaps any obstacle by more than `maxOverlap` of its own area. */
+function overlapsObstacle(f: DetectedFixture, obstacles: FixtureObstacle[], maxOverlap = 0.2): boolean {
+  const fMinX = f.x - f.width / 2;
+  const fMinY = f.y - f.height / 2;
+  const fMaxX = f.x + f.width / 2;
+  const fMaxY = f.y + f.height / 2;
+  const fArea = Math.max(1, f.width * f.height);
+  for (const o of obstacles) {
+    const ix = Math.max(0, Math.min(fMaxX, o.maxX) - Math.max(fMinX, o.minX));
+    const iy = Math.max(0, Math.min(fMaxY, o.maxY) - Math.max(fMinY, o.minY));
+    if ((ix * iy) / fArea > maxOverlap) return true;
+  }
+  return false;
+}
+
+/**
+ * Top-level entry point. Runs all detectors, removes any hit that overlaps an
+ * obstacle (stair shaft or wall corridor), deduplicates across types, and
+ * returns at most `maxFixtures` results. When evidence is ambiguous nothing is
+ * emitted — a missed fixture is preferable to a wrong one.
  */
 export function detectFurniture(
   mask: Uint8Array,
   imgW: number,
   footprint: Bounds,
   wallThickness: number,
+  obstacles: FixtureObstacle[] = [],
   maxFixtures = 24,
 ): DetectedFixture[] {
+  // Measured on the seven-fixture corpus (tests/benchmark/fixture-diag.mjs):
+  // the bordered-box detectors — detectFridges, detectSinks, detectToilets,
+  // detectShowersAndBathtubs — fire 20–48 times PER PLAN, saturating the cap
+  // on dimension text, room-label boxes and window mullions. They do not
+  // separate real fixtures from drawing furniture and text, so per the Stage 5
+  // gate ("a detector that fires on furniture outlines/text stays off") they
+  // are disabled here. detectStoves is the only one that scores zero false
+  // positives across all seven fixtures, so it alone runs; when it finds
+  // nothing the fixture list is empty — the intended fallback. The other
+  // detectors remain exported for a future tuning pass keyed to room type.
   const all: DetectedFixture[] = [
     ...detectStoves(mask, imgW, footprint, wallThickness),
-    ...detectFridges(mask, imgW, footprint, wallThickness),
-    ...detectToilets(mask, imgW, footprint, wallThickness),
-    ...detectSinks(mask, imgW, footprint, wallThickness),
-    ...detectShowersAndBathtubs(mask, imgW, footprint, wallThickness),
   ];
+  const cleared = obstacles.length ? all.filter((f) => !overlapsObstacle(f, obstacles)) : all;
   // Re-number ids uniquely after merging all kinds
-  const renumbered = all.map((f, i) => ({ ...f, id: `fixture-${i + 1}` }));
+  const renumbered = cleared.map((f, i) => ({ ...f, id: `fixture-${i + 1}` }));
   return deduplicateFixtures(renumbered).slice(0, maxFixtures);
 }

@@ -1,6 +1,6 @@
 import type { SourceRegion } from "./plan-regions";
 import type { Fixture, Level, Opening, OutdoorArea, Room, Stair, Wall } from "./scene-data";
-import { detectFurniture } from "./furniture-detector.ts";
+import { detectFurniture, type FixtureObstacle } from "./furniture-detector.ts";
 export type { DetectedFixture } from "./furniture-detector.ts";
 
 export type Axis = "horizontal" | "vertical";
@@ -2207,9 +2207,26 @@ function detectFloorStructureAligned(
 
   const rooms = detectRooms(walls, footprintBounds);
   // Furniture detection: use the medium mask (thin strokes visible) and keep
-  // results only within the footprint interior. Conservative — nothing is
-  // emitted when evidence is ambiguous.
-  const fixtures = detectFurniture(mediumMask, width, footprintBounds, wallThickness);
+  // results only within the footprint interior. Stair shafts (their treads
+  // read as a grid of boxes) and wall corridors (their corners read as
+  // bordered boxes) are the dominant false-positive sources, so both are
+  // supplied as obstacles. Conservative — nothing is emitted when ambiguous.
+  const stairObstacles: FixtureObstacle[] = stairs.map((stair) => ({
+    minX: stair.x - wallThickness,
+    minY: stair.y - wallThickness,
+    maxX: stair.x + stair.width + wallThickness,
+    maxY: stair.y + stair.height + wallThickness,
+  }));
+  const wallObstacles: FixtureObstacle[] = walls.map((wall) => ({
+    minX: Math.min(wall.start[0], wall.end[0]) - wall.thickness,
+    minY: Math.min(wall.start[1], wall.end[1]) - wall.thickness,
+    maxX: Math.max(wall.start[0], wall.end[0]) + wall.thickness,
+    maxY: Math.max(wall.start[1], wall.end[1]) + wall.thickness,
+  }));
+  const fixtures = detectFurniture(mediumMask, width, footprintBounds, wallThickness, [
+    ...stairObstacles,
+    ...wallObstacles,
+  ]);
   return {
     regionId: region.id,
     sourceWidth: width,
