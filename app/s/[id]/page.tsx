@@ -14,16 +14,16 @@ export default function SharePage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     const id = params.id;
-    if (!id) { setError("Missing share ID."); setLoading(false); return; }
-
-    fetch(`/api/share/${encodeURIComponent(id)}`)
-      .then(async (res) => {
-        const data = await res.json() as { document?: unknown; error?: string };
-        if (!res.ok || !data.document) throw new Error(data.error ?? "Share link not found.");
-        const validated = validateFloorplanDocument(data.document);
-        setDocument(validated);
-        setLevels(documentSceneLevels(validated));
-      })
+    const load = async () => {
+      if (!id) throw new Error("Missing share ID.");
+      const res = await fetch(`/api/share/${encodeURIComponent(id)}`);
+      const data = await res.json() as { document?: unknown; error?: string };
+      if (!res.ok || !data.document) throw new Error(data.error ?? "Share link not found.");
+      const validated = validateFloorplanDocument(data.document);
+      setDocument(validated);
+      setLevels(documentSceneLevels(validated));
+    };
+    load()
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load shared project."))
       .finally(() => setLoading(false));
   }, [params.id]);

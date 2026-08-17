@@ -121,7 +121,6 @@ export function detectStoves(
           if (colGroups !== 2 || rowGroups !== 2) continue;
           const cx = (xs[0] + xs[3]) / 2;
           const cy = (ys[0] + ys[3]) / 2;
-          const w = xSpan + xs[0] * 0 + quad[0].r * 2;
           results.push({
             id: `stove-${results.length + 1}`,
             kind: "stove",
@@ -172,7 +171,6 @@ export function detectFridges(
           if (borderDensity < 0.25) continue;
           // Interior must have X diagonals: check 4 diagonal strips
           const m = 3;
-          const innerArea = Math.max(1, (w - m * 2) * (h - m * 2));
           // Diagonal 1: top-left to bottom-right
           let d1 = 0; let d2 = 0;
           const steps = Math.round(Math.min(w, h) * 0.7);
