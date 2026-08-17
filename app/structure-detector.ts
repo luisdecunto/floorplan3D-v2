@@ -2341,7 +2341,17 @@ function markBalustradeSpans(
     }
     if (spanStart !== null && longEnough(spanStart, 1)) railSpans.push([spanStart, 1]);
 
-    return railSpans.length ? { ...wall, railSpans } : wall;
+    // Where a balustrade meets a wall at a corner, the crossing linework thickens
+    // the last samples and the run stops just short of the end. Left alone that
+    // renders as a sliver of full-height wall standing in the corner, so a
+    // remainder shorter than a couple of wall thicknesses is closed up.
+    const snap = wallThickness * 2;
+    const snapped = railSpans.map(([from, to]): [number, number] => [
+      from * runLength <= snap ? 0 : from,
+      (1 - to) * runLength <= snap ? 1 : to,
+    ]);
+
+    return snapped.length ? { ...wall, railSpans: snapped } : wall;
   });
 }
 

@@ -89,10 +89,12 @@ export function stairwellRailSegments(
       if (Math.abs(line - edgeCoord) > WALL_EDGE_TOLERANCE) continue;
       const runA = edgeAxis === "z" ? wall.start[0] : wall.start[1];
       const runB = edgeAxis === "z" ? wall.end[0] : wall.end[1];
-      const fullSpan: [number, number] = [
-        Math.min(runA, runB) - WALL_EDGE_TOLERANCE,
-        Math.max(runA, runB) + WALL_EDGE_TOLERANCE,
-      ];
+      // The wall's own extent, unpadded. WALL_EDGE_TOLERANCE decides which walls
+      // sit on this edge; using it to pad the span as well stopped railing 0.32m
+      // short of a wall's end, leaving the opening un-railed into its corners.
+      // Railing may butt against the end face — the sliver filter below still
+      // discards anything too short to read.
+      const fullSpan: [number, number] = [Math.min(runA, runB), Math.max(runA, runB)];
       const rails = railSpansToAbsolute(wall);
       cuts.push(...(rails.length ? subtractIntervals(fullSpan, rails) : [fullSpan]));
     }
