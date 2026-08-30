@@ -33,3 +33,13 @@ test("plan review visually separates detected walls from source annotations", as
   assert.match(css, /\.detected-wall-halo/);
   assert.match(css, /\.region-box\{[^}]*background:(?:transparent|0 0)/);
 });
+
+test("GitHub Pages bundle includes wall-safe furniture editing controls", async () => {
+  const assetDirectory = new URL("assets/", outputDirectory);
+  const scripts = (await readdir(assetDirectory)).filter((entry) => entry.endsWith(".js"));
+  const javascript = (await Promise.all(scripts.map((entry) => readFile(new URL(entry, assetDirectory), "utf8")))).join("\n");
+
+  assert.match(javascript, /Snap to 10 cm grid/);
+  assert.match(javascript, /Placement stopped at the wall/);
+  assert.match(javascript, /Delete furniture/);
+});

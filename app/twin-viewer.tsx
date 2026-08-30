@@ -4,7 +4,7 @@
 
 import { ContactShadows, OrbitControls } from "@react-three/drei";
 import { Canvas, type ThreeEvent, useLoader } from "@react-three/fiber";
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Plane, SRGBColorSpace, TextureLoader, Vector3 } from "three";
 import {
   buildStairConnections,
@@ -29,7 +29,9 @@ export default function TwinViewer({
   decorating,
   exploded,
   furnishings,
+  gridSnapEnabled,
   levels,
+  onBeginMoveFurnishing,
   onMoveFurnishing,
   onSelectFurnishing,
   selectedFurnishingId,
@@ -39,7 +41,9 @@ export default function TwinViewer({
   decorating: boolean;
   exploded: boolean;
   furnishings: FurniturePlacement[];
+  gridSnapEnabled: boolean;
   levels: Level[];
+  onBeginMoveFurnishing: () => void;
   onMoveFurnishing: (id: string, x: number, z: number) => void;
   onSelectFurnishing: (id: string | null) => void;
   selectedFurnishingId: string | null;
@@ -92,7 +96,9 @@ export default function TwinViewer({
               explodeOffset={index * explodeDistance}
               furnishings={furnishings.filter((placement) => placement.levelId === level.id)}
               decorating={decorating}
+              gridSnapEnabled={gridSnapEnabled}
               onDragStateChange={setDraggingFurniture}
+              onBeginMoveFurnishing={onBeginMoveFurnishing}
               onMoveFurnishing={onMoveFurnishing}
               onSelectFurnishing={onSelectFurnishing}
               selectedFurnishingId={selectedFurnishingId}
@@ -120,7 +126,9 @@ function LevelModel({
   access,
   explodeOffset,
   furnishings,
+  gridSnapEnabled,
   onDragStateChange,
+  onBeginMoveFurnishing,
   onMoveFurnishing,
   onSelectFurnishing,
   selectedFurnishingId,
@@ -132,7 +140,9 @@ function LevelModel({
   access: { point: [number, number]; width: number } | null;
   explodeOffset: number;
   furnishings: FurniturePlacement[];
+  gridSnapEnabled: boolean;
   onDragStateChange: (dragging: boolean) => void;
+  onBeginMoveFurnishing: () => void;
   onMoveFurnishing: (id: string, x: number, z: number) => void;
   onSelectFurnishing: (id: string | null) => void;
   selectedFurnishingId: string | null;
@@ -151,6 +161,17 @@ function LevelModel({
   return (
     <group>
       {pieces.map((piece) => <SlabPieceModel key={piece.id} piece={piece} elevation={y} />)}
+      {decorating && gridSnapEnabled && (
+        <gridHelper
+          args={[
+            Math.ceil(Math.max(level.slab.width, level.slab.depth)),
+            Math.max(2, Math.ceil(Math.max(level.slab.width, level.slab.depth) / 0.5)),
+            "#6680c5",
+            "#b7c2dd",
+          ]}
+          position={[level.slab.x, y + 0.081, level.slab.z]}
+        />
+      )}
       {level.floorTextureUrl && <PlanFloor level={level} pieces={pieces} elevation={y} />}
       {opening && <StairwellTrim segments={railSegments} elevation={y} />}
       {(level.outdoorAreas ?? []).map((area) => <OutdoorAreaModel key={area.id} area={area} elevation={y} />)}
@@ -161,6 +182,7 @@ function LevelModel({
           decorating={decorating}
           elevation={y}
           onDragStateChange={onDragStateChange}
+          onBeginMove={onBeginMoveFurnishing}
           onMove={onMoveFurnishing}
           onSelect={onSelectFurnishing}
           placement={placement}
@@ -176,6 +198,7 @@ function PlacedFurnitureModel({
   decorating,
   elevation,
   onDragStateChange,
+  onBeginMove,
   onMove,
   onSelect,
   placement,
@@ -184,6 +207,7 @@ function PlacedFurnitureModel({
   decorating: boolean;
   elevation: number;
   onDragStateChange: (dragging: boolean) => void;
+  onBeginMove: () => void;
   onMove: (id: string, x: number, z: number) => void;
   onSelect: (id: string) => void;
   placement: FurniturePlacement;
@@ -191,6 +215,7 @@ function PlacedFurnitureModel({
 }) {
   const floorY = elevation + 0.06;
   const [dragging, setDragging] = useState(false);
+  const moveStarted = useRef(false);
   const dragPlane = useMemo(() => new Plane(new Vector3(0, 1, 0), -floorY), [floorY]);
   const dragPoint = useMemo(() => new Vector3(), []);
   const item = furnitureCatalogItem(placement.catalogId);
@@ -204,6 +229,7 @@ function PlacedFurnitureModel({
     if (!decorating) return;
     event.stopPropagation();
     onSelect(placement.id);
+    moveStarted.current = false;
     setDragging(true);
     onDragStateChange(true);
     (event.target as EventTarget & { setPointerCapture(pointerId: number): void }).setPointerCapture(event.pointerId);
@@ -211,6 +237,10 @@ function PlacedFurnitureModel({
   const drag = (event: ThreeEvent<PointerEvent>) => {
     if (!dragging || !decorating) return;
     event.stopPropagation();
+    if (!moveStarted.current) {
+      onBeginMove();
+      moveStarted.current = true;
+    }
     if (event.ray.intersectPlane(dragPlane, dragPoint)) onMove(placement.id, dragPoint.x, dragPoint.z);
   };
   const stopDragging = (event: ThreeEvent<PointerEvent>) => {

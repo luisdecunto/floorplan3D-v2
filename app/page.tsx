@@ -14,6 +14,7 @@ import {
   Download,
   Eye,
   EyeOff,
+  Grid3X3,
   ImageUp,
   Layers3,
   Maximize2,
@@ -49,11 +50,15 @@ import {
 import { sampleLevels, type Level } from "./scene-data";
 import {
   FURNITURE_CATALOG,
-  clampFurniturePosition,
   furnitureCatalogItem,
   type FurnitureCatalogItem,
   type FurniturePlacement,
 } from "./furniture-catalog";
+import {
+  findNearestValidFurniturePosition,
+  resolveFurnitureMove,
+  validFurniturePosition,
+} from "./furniture-placement";
 import {
   addDocumentOpening,
   createFloorplanDocumentV2,
@@ -248,6 +253,8 @@ export default function Home() {
   const [lastProject, setLastProject] = useState<FloorplanDocumentV2 | null>(null);
   const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
   const [furnishings, setFurnishings] = useState<FurniturePlacement[]>([]);
+  const [furnitureHistory, setFurnitureHistory] = useState<FurniturePlacement[][]>([]);
+  const [gridSnapEnabled, setGridSnapEnabled] = useState(true);
   const [selectedFurnishingId, setSelectedFurnishingId] = useState<string | null>(null);
   const [projectMessage, setProjectMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -377,6 +384,7 @@ export default function Home() {
       previewDataUrl: proposedPreviewDataUrl,
     }) : null);
     setFurnishings([]);
+    setFurnitureHistory([]);
     setSelectedFurnishingId(null);
     setAnalysisSize(proposedSize);
     setActiveLevel(proposedRegions[0]?.id ?? "ground");
@@ -394,6 +402,7 @@ export default function Home() {
       const imported = parseProject(await projectFile.text());
       setDocument(imported);
       setFurnishings(imported.furnishings ?? []);
+      setFurnitureHistory([]);
       setSelectedFurnishingId(null);
       setRegions(documentRegions(imported));
       setStructures(documentStructures(imported));
@@ -414,6 +423,7 @@ export default function Home() {
   function openProject(project: FloorplanDocumentV2) {
     setDocument(project);
     setFurnishings(project.furnishings ?? []);
+    setFurnitureHistory([]);
     setSelectedFurnishingId(null);
     setRegions(documentRegions(project));
     setStructures(documentStructures(project));
@@ -578,6 +588,23 @@ export default function Home() {
     }
   }
 
+  function rememberFurnitureLayout() {
+    setFurnitureHistory((current) => [...current.slice(-24), furnishings]);
+  }
+
+  function beginFurnitureMove() {
+    rememberFurnitureLayout();
+  }
+
+  function undoFurnitureEdit() {
+    const previous = furnitureHistory.at(-1);
+    if (!previous) return;
+    setFurnishings(previous);
+    setFurnitureHistory((current) => current.slice(0, -1));
+    setSelectedFurnishingId((current) => current && previous.some((placement) => placement.id === current) ? current : null);
+    setProjectMessage("Last furniture change undone.");
+  }
+
   function addFurnishing(item: FurnitureCatalogItem) {
     const level = previewLevels.find((candidate) => candidate.id === activeLevel) ?? previewLevels[0];
     if (!level) return;
@@ -593,9 +620,20 @@ export default function Home() {
       z: level.slab.z + stagger * 0.45,
       rotation: 0,
     };
-    const position = clampFurniturePosition(item, level.slab, placement.rotation, placement.x, placement.z);
+    const position = findNearestValidFurniturePosition(
+      item,
+      level,
+      placement.rotation,
+      placement,
+      gridSnapEnabled ? 0.1 : 0,
+    );
+    if (!position) {
+      setProjectMessage(`${item.name} does not fit in an open area on ${level.name}.`);
+      return;
+    }
     placement.x = position.x;
     placement.z = position.z;
+    rememberFurnitureLayout();
     setFurnishings((current) => [...current, placement]);
     setSelectedFurnishingId(placement.id);
     setViewMode("furnish");
@@ -612,35 +650,57 @@ export default function Home() {
   }
 
   function moveFurnishing(id: string, x: number, z: number) {
-    setFurnishings((current) => current.map((placement) => {
-      if (placement.id !== id) return placement;
-      const item = furnitureCatalogItem(placement.catalogId);
-      const level = previewLevels.find((candidate) => candidate.id === placement.levelId);
-      if (!item || !level) return placement;
-      const position = clampFurniturePosition(item, level.slab, placement.rotation, x, z);
-      return { ...placement, ...position };
-    }));
+    const placement = furnishings.find((candidate) => candidate.id === id);
+    const item = placement ? furnitureCatalogItem(placement.catalogId) : undefined;
+    const level = placement ? previewLevels.find((candidate) => candidate.id === placement.levelId) : undefined;
+    if (!placement || !item || !level) return;
+    const result = resolveFurnitureMove(
+      item,
+      level,
+      placement.rotation,
+      placement,
+      { x, z },
+      gridSnapEnabled ? 0.1 : 0,
+    );
+    setFurnishings((current) => current.map((candidate) => (
+      candidate.id === id ? { ...candidate, ...result.position } : candidate
+    )));
+    if (result.blockedByWall) setProjectMessage("Placement stopped at the wall.");
   }
 
   function nudgeFurnishing(id: string, deltaX: number, deltaZ: number) {
     const placement = furnishings.find((candidate) => candidate.id === id);
-    if (placement) moveFurnishing(id, placement.x + deltaX, placement.z + deltaZ);
+    if (!placement) return;
+    rememberFurnitureLayout();
+    moveFurnishing(id, placement.x + deltaX, placement.z + deltaZ);
   }
 
   function rotateFurnishing(id: string, direction: -1 | 1) {
     const snap = Math.PI / 12;
-    setFurnishings((current) => current.map((placement) => {
-      if (placement.id !== id) return placement;
-      const item = furnitureCatalogItem(placement.catalogId);
-      const level = previewLevels.find((candidate) => candidate.id === placement.levelId);
-      if (!item || !level) return placement;
-      const rotation = placement.rotation + snap * direction;
-      const position = clampFurniturePosition(item, level.slab, rotation, placement.x, placement.z);
-      return { ...placement, ...position, rotation };
-    }));
+    const placement = furnishings.find((candidate) => candidate.id === id);
+    const item = placement ? furnitureCatalogItem(placement.catalogId) : undefined;
+    const level = placement ? previewLevels.find((candidate) => candidate.id === placement.levelId) : undefined;
+    if (!placement || !item || !level) return;
+    const rotation = placement.rotation + snap * direction;
+    const position = validFurniturePosition(
+      item,
+      level,
+      rotation,
+      placement,
+      gridSnapEnabled ? 0.1 : 0,
+    );
+    if (!position) {
+      setProjectMessage("There is not enough clearance to rotate here.");
+      return;
+    }
+    rememberFurnitureLayout();
+    setFurnishings((current) => current.map((candidate) => (
+      candidate.id === id ? { ...candidate, ...position, rotation } : candidate
+    )));
   }
 
   function removeFurnishing(id: string) {
+    rememberFurnitureLayout();
     setFurnishings((current) => current.filter((placement) => placement.id !== id));
     setSelectedFurnishingId((current) => current === id ? null : current);
     setProjectMessage("Furniture removed from the room.");
@@ -655,17 +715,20 @@ export default function Home() {
         addOpening={addOpening}
         alignStairs={alignStairs}
         analysisSize={analysisSize}
+        canUndoFurniture={furnitureHistory.length > 0}
         confirmLevel={confirmLevel}
         document={document}
         exploded={exploded}
         furnishings={furnishings}
         focusedLevel={focusedLevel}
+        gridSnapEnabled={gridSnapEnabled}
         imageUrl={imageUrl}
         measureScale={measureScale}
         mobilePanel={mobilePanel}
         moveLevel={moveLevel}
         moveFurnishing={moveFurnishing}
         nudgeFurnishing={nudgeFurnishing}
+        onBeginMoveFurnishing={beginFurnitureMove}
         previewLevels={previewLevels}
         shareProject={shareProject}
         projectMessage={projectMessage}
@@ -684,6 +747,7 @@ export default function Home() {
         setActiveLevel={setActiveLevel}
         setExploded={setExploded}
         setFocusedLevel={setFocusedLevel}
+        setGridSnapEnabled={setGridSnapEnabled}
         setMobilePanel={setMobilePanel}
         setSelectedWallId={setSelectedWallId}
         setSelectedFurnishingId={selectFurnishing}
@@ -693,6 +757,7 @@ export default function Home() {
         toggleLevel={toggleLevel}
         toggleOutdoorArea={toggleOutdoorArea}
         undoEdit={undoEdit}
+        undoFurnitureEdit={undoFurnitureEdit}
         viewMode={viewMode}
         visibleLevels={visibleLevels}
         wallCutaway={wallCutaway}
@@ -789,17 +854,20 @@ function Workspace({
   addOpening,
   alignStairs,
   analysisSize,
+  canUndoFurniture,
   confirmLevel,
   document,
   exploded,
   furnishings,
   focusedLevel,
+  gridSnapEnabled,
   imageUrl,
   measureScale,
   mobilePanel,
   moveFurnishing,
   moveLevel,
   nudgeFurnishing,
+  onBeginMoveFurnishing,
   previewLevels,
   projectMessage,
   regions,
@@ -818,6 +886,7 @@ function Workspace({
   setActiveLevel,
   setExploded,
   setFocusedLevel,
+  setGridSnapEnabled,
   setMobilePanel,
   setSelectedWallId,
   setSelectedFurnishingId,
@@ -827,6 +896,7 @@ function Workspace({
   toggleLevel,
   toggleOutdoorArea,
   undoEdit,
+  undoFurnitureEdit,
   viewMode,
   visibleLevels,
   wallCutaway,
@@ -836,17 +906,20 @@ function Workspace({
   addOpening: (kind: "door" | "window") => void;
   alignStairs: () => void;
   analysisSize: AnalysisSize | null;
+  canUndoFurniture: boolean;
   confirmLevel: () => void;
   document: FloorplanDocumentV2 | null;
   exploded: boolean;
   furnishings: FurniturePlacement[];
   focusedLevel: string | null;
+  gridSnapEnabled: boolean;
   imageUrl: string | null;
   measureScale: () => void;
   mobilePanel: "levels" | "canvas" | "details";
   moveFurnishing: (id: string, x: number, z: number) => void;
   moveLevel: (id: string, offset: -1 | 1) => void;
   nudgeFurnishing: (id: string, deltaX: number, deltaZ: number) => void;
+  onBeginMoveFurnishing: () => void;
   previewLevels: Level[];
   projectMessage: string | null;
   regions: SourceRegion[];
@@ -865,6 +938,7 @@ function Workspace({
   setActiveLevel: (id: string) => void;
   setExploded: (value: boolean) => void;
   setFocusedLevel: (id: string | null) => void;
+  setGridSnapEnabled: (enabled: boolean) => void;
   setMobilePanel: (panel: "levels" | "canvas" | "details") => void;
   setSelectedWallId: (id: string | null) => void;
   setSelectedFurnishingId: (id: string | null) => void;
@@ -874,6 +948,7 @@ function Workspace({
   toggleLevel: (id: string) => void;
   toggleOutdoorArea: (id: string, included: boolean) => void;
   undoEdit: () => void;
+  undoFurnitureEdit: () => void;
   viewMode: ViewMode;
   visibleLevels: Set<string>;
   wallCutaway: number;
@@ -990,7 +1065,9 @@ function Workspace({
                     decorating={viewMode === "furnish"}
                     exploded={exploded}
                     furnishings={furnishings}
+                    gridSnapEnabled={gridSnapEnabled}
                     levels={previewLevels}
+                    onBeginMoveFurnishing={onBeginMoveFurnishing}
                     onMoveFurnishing={moveFurnishing}
                     onSelectFurnishing={setSelectedFurnishingId}
                     selectedFurnishingId={selectedFurnishingId}
@@ -1031,6 +1108,26 @@ function Workspace({
                 <output>{Math.round(wallCutaway * 100)}%</output>
               </label>
             )}
+            {viewMode === "furnish" && (
+              <div className="canvas-placement-bar" aria-label="Furniture placement controls">
+                <label className="grid-snap-toggle">
+                  <input
+                    type="checkbox"
+                    checked={gridSnapEnabled}
+                    onChange={(event) => setGridSnapEnabled(event.target.checked)}
+                  />
+                  <Grid3X3 size={14} /> Grid 10 cm
+                </label>
+                <button onClick={undoFurnitureEdit} disabled={!canUndoFurniture}><Undo2 size={14} /> Undo</button>
+                {selectedFurnishingId && (
+                  <>
+                    <button onClick={() => setSelectedFurnishingId(null)}><ChevronLeft size={14} /> Back</button>
+                    <button onClick={() => rotateFurnishing(selectedFurnishingId, 1)}><RotateCw size={14} /> Rotate</button>
+                    <button className="danger" onClick={() => removeFurnishing(selectedFurnishingId)}><Trash2 size={14} /> Delete</button>
+                  </>
+                )}
+              </div>
+            )}
             <div className="canvas-hint">
               {viewMode === "review"
                 ? <><ScanLine size={14} /> Tap a region to review that level</>
@@ -1046,12 +1143,17 @@ function Workspace({
             <FurniturePanel
               activeLevel={selectedLevel}
               addFurnishing={addFurnishing}
+              canUndoFurniture={canUndoFurniture}
               furnishings={furnishings}
+              gridSnapEnabled={gridSnapEnabled}
               nudgeFurnishing={nudgeFurnishing}
+              projectMessage={projectMessage}
               removeFurnishing={removeFurnishing}
               rotateFurnishing={rotateFurnishing}
               selectedFurnishingId={selectedFurnishingId}
+              setGridSnapEnabled={setGridSnapEnabled}
               setSelectedFurnishingId={setSelectedFurnishingId}
+              undoFurnitureEdit={undoFurnitureEdit}
             />
           ) : <>
           <div className="panel-heading details-heading">
@@ -1178,21 +1280,31 @@ function Workspace({
 function FurniturePanel({
   activeLevel,
   addFurnishing,
+  canUndoFurniture,
   furnishings,
+  gridSnapEnabled,
   nudgeFurnishing,
+  projectMessage,
   removeFurnishing,
   rotateFurnishing,
   selectedFurnishingId,
+  setGridSnapEnabled,
   setSelectedFurnishingId,
+  undoFurnitureEdit,
 }: {
   activeLevel: Level;
   addFurnishing: (item: FurnitureCatalogItem) => void;
+  canUndoFurniture: boolean;
   furnishings: FurniturePlacement[];
+  gridSnapEnabled: boolean;
   nudgeFurnishing: (id: string, deltaX: number, deltaZ: number) => void;
+  projectMessage: string | null;
   removeFurnishing: (id: string) => void;
   rotateFurnishing: (id: string, direction: -1 | 1) => void;
   selectedFurnishingId: string | null;
+  setGridSnapEnabled: (enabled: boolean) => void;
   setSelectedFurnishingId: (id: string | null) => void;
+  undoFurnitureEdit: () => void;
 }) {
   const levelFurniture = furnishings.filter((placement) => placement.levelId === activeLevel.id);
   const selectedPlacement = furnishings.find((placement) => placement.id === selectedFurnishingId);
@@ -1204,6 +1316,18 @@ function FurniturePanel({
         <span className="furniture-count">{levelFurniture.length} placed</span>
       </div>
       <p className="panel-intro">Starter sofas use exact metric footprints and lightweight procedural models. Licensed branded GLBs can replace them later.</p>
+      <div className="furniture-edit-toolbar">
+        <label className="grid-snap-toggle panel-grid-toggle">
+          <input
+            type="checkbox"
+            checked={gridSnapEnabled}
+            onChange={(event) => setGridSnapEnabled(event.target.checked)}
+          />
+          <Grid3X3 size={14} /> Snap to 10 cm grid
+        </label>
+        <button onClick={undoFurnitureEdit} disabled={!canUndoFurniture}><Undo2 size={14} /> Undo</button>
+      </div>
+      {projectMessage && <div className="project-message furniture-message">{projectMessage}</div>}
 
       {selectedItem && selectedPlacement && (
         <div className="selected-furniture-card">
@@ -1214,7 +1338,10 @@ function FurniturePanel({
             <button onClick={() => setSelectedFurnishingId(null)} aria-label="Clear furniture selection"><X size={13} /></button>
           </div>
           <div className="placement-controls" aria-label={`Position ${selectedItem.name}`}>
-            <span className="placement-control-label"><Move size={13} /> Move 10 cm</span>
+            <span className="placement-control-label"><Move size={13} /> Position and rotation</span>
+            <output className="placement-metrics">
+              X {selectedPlacement.x.toFixed(2)} m · Z {selectedPlacement.z.toFixed(2)} m · {Math.round(selectedPlacement.rotation * 180 / Math.PI)}°
+            </output>
             <span className="nudge-pad">
               <button onClick={() => nudgeFurnishing(selectedPlacement.id, 0, -0.1)} aria-label="Move furniture away"><ArrowUp size={14} /></button>
               <button onClick={() => nudgeFurnishing(selectedPlacement.id, -0.1, 0)} aria-label="Move furniture left"><ArrowDown className="turn-left" size={14} /></button>
@@ -1224,7 +1351,8 @@ function FurniturePanel({
             <span className="placement-actions">
               <button onClick={() => rotateFurnishing(selectedPlacement.id, -1)}><RotateCw className="rotate-left" size={13} /> −15°</button>
               <button onClick={() => rotateFurnishing(selectedPlacement.id, 1)}><RotateCw size={13} /> +15°</button>
-              <button className="remove-furniture" onClick={() => removeFurnishing(selectedPlacement.id)}><Trash2 size={13} /> Remove</button>
+              <button className="back-to-catalogue" onClick={() => setSelectedFurnishingId(null)}><ChevronLeft size={13} /> Back to catalogue</button>
+              <button className="remove-furniture" onClick={() => removeFurnishing(selectedPlacement.id)}><Trash2 size={13} /> Delete furniture</button>
             </span>
           </div>
         </div>
@@ -1245,7 +1373,7 @@ function FurniturePanel({
         ))}
       </div>
 
-      <div className="catalogue-note"><ShieldCheck size={15} /><span>Drag a selected piece on the floor, or use the 10 cm controls. Keyboard: arrows move, Q/E rotate, Delete removes.</span></div>
+      <div className="catalogue-note"><ShieldCheck size={15} /><span>Furniture stops at structural walls. Drag it on the floor or use the 10 cm controls. Keyboard: arrows move, Q/E rotate, Delete removes.</span></div>
     </div>
   );
 }
