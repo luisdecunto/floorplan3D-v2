@@ -6,7 +6,16 @@ export type FurniturePosition = { x: number; z: number };
 
 export type FurnitureMoveResult = {
   position: FurniturePosition;
-  blockedByWall: boolean;
+  collision: FurnitureCollisionReason;
+};
+
+export type FurnitureCollisionReason = "wall" | "door" | "fixture" | "stair" | "furniture" | null;
+
+export type FurnitureObstacle = {
+  id: string;
+  item: FurnitureCatalogItem;
+  position: FurniturePosition;
+  rotation: number;
 };
 
 type Axis = { x: number; z: number };
@@ -20,8 +29,6 @@ type OrientedRectangle = {
 };
 
 const WALL_CLEARANCE = 0.035;
-const DRAG_SAMPLE_DISTANCE = 0.045;
-
 const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
 
 function snapCoordinate(value: number, origin: number, gridSize: number) {
@@ -128,6 +135,70 @@ export function furnitureIntersectsWalls(
   }));
 }
 
+export function furnitureIntersectsDoors(
+  item: FurnitureCatalogItem,
+  level: Pick<Level, "walls">,
+  rotation: number,
+  position: FurniturePosition,
+) {
+  const furniture = furnitureRectangle(item, rotation, position);
+  return level.walls.some((wall) => (wall.openings ?? []).some((opening) => {
+    if (opening.kind !== "door") return false;
+    const length = Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1]);
+    const door = wallRectangle(
+      { ...wall, thickness: Math.max(0.08, wall.thickness ?? 0.18) },
+      clamp(opening.offset, 0, length),
+      clamp(opening.offset + opening.width, 0, length),
+    );
+    return door ? rectanglesOverlap(furniture, door) : false;
+  }));
+}
+
+export function furnitureIntersectsFixtures(
+  item: FurnitureCatalogItem,
+  level: Pick<Level, "fixtures">,
+  rotation: number,
+  position: FurniturePosition,
+) {
+  const furniture = furnitureRectangle(item, rotation, position);
+  return (level.fixtures ?? []).some((fixture) => rectanglesOverlap(furniture, {
+    center: { x: fixture.x, z: fixture.z },
+    axisX: { x: Math.cos(fixture.rotation), z: -Math.sin(fixture.rotation) },
+    axisZ: { x: Math.sin(fixture.rotation), z: Math.cos(fixture.rotation) },
+    halfWidth: fixture.width / 2,
+    halfDepth: fixture.depth / 2,
+  }));
+}
+
+export function furnitureIntersectsStairs(
+  item: FurnitureCatalogItem,
+  level: Pick<Level, "stairs">,
+  rotation: number,
+  position: FurniturePosition,
+) {
+  const furniture = furnitureRectangle(item, rotation, position);
+  return (level.stairs ?? []).some((stair) => rectanglesOverlap(furniture, {
+    center: { x: stair.x, z: stair.z },
+    axisX: { x: 1, z: 0 },
+    axisZ: { x: 0, z: 1 },
+    halfWidth: stair.width / 2,
+    halfDepth: stair.depth / 2,
+  }));
+}
+
+export function furnitureIntersectsFurniture(
+  item: FurnitureCatalogItem,
+  rotation: number,
+  position: FurniturePosition,
+  obstacles: FurnitureObstacle[],
+) {
+  const furniture = furnitureRectangle(item, rotation, position);
+  return obstacles.some((obstacle) => rectanglesOverlap(
+    furniture,
+    furnitureRectangle(obstacle.item, obstacle.rotation, obstacle.position),
+  ));
+}
+
 function preparedPosition(
   item: FurnitureCatalogItem,
   level: Pick<Level, "slab">,
@@ -139,54 +210,62 @@ function preparedPosition(
   return clampFurniturePosition(item, level.slab, rotation, snapped.x, snapped.z);
 }
 
-export function validFurniturePosition(
+export function previewFurniturePosition(
   item: FurnitureCatalogItem,
-  level: Pick<Level, "slab" | "walls">,
+  level: Pick<Level, "slab" | "walls" | "fixtures" | "stairs">,
   rotation: number,
   position: FurniturePosition,
   gridSize = 0,
-) {
+  obstacles: FurnitureObstacle[] = [],
+): FurnitureMoveResult {
   const prepared = preparedPosition(item, level, rotation, position, gridSize);
-  return furnitureIntersectsWalls(item, level, rotation, prepared) ? null : prepared;
+  let collision: FurnitureCollisionReason = null;
+  if (furnitureIntersectsWalls(item, level, rotation, prepared)) collision = "wall";
+  else if (furnitureIntersectsDoors(item, level, rotation, prepared)) collision = "door";
+  else if (furnitureIntersectsFixtures(item, level, rotation, prepared)) collision = "fixture";
+  else if (furnitureIntersectsStairs(item, level, rotation, prepared)) collision = "stair";
+  else if (furnitureIntersectsFurniture(item, rotation, prepared, obstacles)) collision = "furniture";
+  return { position: prepared, collision };
 }
 
-/** Samples the whole drag path so a large pointer jump cannot cross a wall. */
+export function validFurniturePosition(
+  item: FurnitureCatalogItem,
+  level: Pick<Level, "slab" | "walls" | "fixtures" | "stairs">,
+  rotation: number,
+  position: FurniturePosition,
+  gridSize = 0,
+  obstacles: FurnitureObstacle[] = [],
+) {
+  const preview = previewFurniturePosition(item, level, rotation, position, gridSize, obstacles);
+  return preview.collision ? null : preview.position;
+}
+
+/**
+ * Dragging is a preview, so only the target matters. The model may pass through
+ * an obstacle on its way to another room; an invalid final target is reported
+ * to the caller and must not be committed.
+ */
 export function resolveFurnitureMove(
   item: FurnitureCatalogItem,
-  level: Pick<Level, "slab" | "walls">,
+  level: Pick<Level, "slab" | "walls" | "fixtures" | "stairs">,
   rotation: number,
-  from: FurniturePosition,
+  _from: FurniturePosition,
   target: FurniturePosition,
   gridSize = 0,
+  obstacles: FurnitureObstacle[] = [],
 ): FurnitureMoveResult {
-  const preparedTarget = preparedPosition(item, level, rotation, target, gridSize);
-  const distance = Math.hypot(preparedTarget.x - from.x, preparedTarget.z - from.z);
-  const steps = Math.max(1, Math.ceil(distance / DRAG_SAMPLE_DISTANCE));
-  let lastValid = preparedPosition(item, level, rotation, from, gridSize);
-
-  for (let step = 1; step <= steps; step += 1) {
-    const progress = step / steps;
-    const sample = preparedPosition(item, level, rotation, {
-      x: from.x + (preparedTarget.x - from.x) * progress,
-      z: from.z + (preparedTarget.z - from.z) * progress,
-    }, gridSize);
-    if (sample.x === lastValid.x && sample.z === lastValid.z) continue;
-    if (furnitureIntersectsWalls(item, level, rotation, sample)) {
-      return { position: lastValid, blockedByWall: true };
-    }
-    lastValid = sample;
-  }
-  return { position: lastValid, blockedByWall: false };
+  return previewFurniturePosition(item, level, rotation, target, gridSize, obstacles);
 }
 
 export function findNearestValidFurniturePosition(
   item: FurnitureCatalogItem,
-  level: Pick<Level, "slab" | "walls">,
+  level: Pick<Level, "slab" | "walls" | "fixtures" | "stairs">,
   rotation: number,
   preferred: FurniturePosition,
   gridSize = 0,
+  obstacles: FurnitureObstacle[] = [],
 ) {
-  const direct = validFurniturePosition(item, level, rotation, preferred, gridSize);
+  const direct = validFurniturePosition(item, level, rotation, preferred, gridSize, obstacles);
   if (direct) return direct;
 
   const step = Math.max(gridSize, 0.2);
@@ -203,7 +282,7 @@ export function findNearestValidFurniturePosition(
       - Math.hypot(rightCandidate.x - preferred.x, rightCandidate.z - preferred.z)
   ));
   for (const candidate of candidates) {
-    const valid = validFurniturePosition(item, level, rotation, candidate, gridSize);
+    const valid = validFurniturePosition(item, level, rotation, candidate, gridSize, obstacles);
     if (valid) return valid;
   }
   return null;

@@ -76,11 +76,13 @@ test("V2 project JSON preserves structural corrections and supports undo", () =>
     x: 1.2,
     z: -0.4,
     rotation: Math.PI / 2,
+    mirrored: true,
   }];
   const roundTrip = parseProject(serializeProject(corrected));
   assert.equal(validateFloorplanDocument(roundTrip).levels.length, 2);
   assert.equal(roundTrip.furnishings.length, 1);
   assert.equal(roundTrip.furnishings[0].catalogId, "haven-wide-3");
+  assert.equal(roundTrip.furnishings[0].mirrored, true);
   const restored = undoLastDocumentEdit(roundTrip);
   assert.equal(restored.levels.find(({ id }) => id === "upper").structure.walls.length, 1);
   assert.equal(restored.edits.length, 0);

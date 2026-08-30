@@ -40,7 +40,8 @@ test("GitHub Pages bundle includes wall-safe furniture editing controls", async 
   const javascript = (await Promise.all(scripts.map((entry) => readFile(new URL(entry, assetDirectory), "utf8")))).join("\n");
 
   assert.match(javascript, /Snap to 10 cm grid/);
-  assert.match(javascript, /Placement stopped at the wall/);
+  assert.match(javascript, /Move through it, then release on a clear area/);
+  assert.match(javascript, /Mirror furniture/);
   assert.match(javascript, /Delete furniture/);
   assert.match(javascript, /FRIHETEN corner sofa-bed/);
   assert.match(javascript, /MALM high bed frame/);

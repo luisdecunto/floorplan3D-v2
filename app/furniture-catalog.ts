@@ -25,6 +25,7 @@ export type FurniturePlacement = {
   x: number;
   z: number;
   rotation: number;
+  mirrored?: boolean;
 };
 
 /**

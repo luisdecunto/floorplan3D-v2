@@ -440,6 +440,7 @@ export function validateFloorplanDocument(value: unknown): FloorplanDocumentV2 {
       && Number.isFinite(placement.x)
       && Number.isFinite(placement.z)
       && Number.isFinite(placement.rotation)
+      && (placement.mirrored === undefined || typeof placement.mirrored === "boolean")
     ))
     : [];
   return candidate as FloorplanDocumentV2;

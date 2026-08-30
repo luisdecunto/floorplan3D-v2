@@ -18,6 +18,7 @@ import {
 } from "./scene-geometry";
 import { type Fixture, type Level, type Opening, type OutdoorArea, type Wall } from "./scene-data";
 import { furnitureCatalogItem, type FurnitureCatalogItem, type FurniturePlacement } from "./furniture-catalog";
+import type { FurnitureMoveResult, FurniturePosition } from "./furniture-placement";
 import {
   activateRailSpans,
   clampWallGapsToRails,
@@ -31,8 +32,8 @@ export default function TwinViewer({
   furnishings,
   gridSnapEnabled,
   levels,
-  onBeginMoveFurnishing,
-  onMoveFurnishing,
+  onCommitMoveFurnishing,
+  onPreviewMoveFurnishing,
   onSelectFurnishing,
   selectedFurnishingId,
   visibleLevels,
@@ -43,8 +44,8 @@ export default function TwinViewer({
   furnishings: FurniturePlacement[];
   gridSnapEnabled: boolean;
   levels: Level[];
-  onBeginMoveFurnishing: () => void;
-  onMoveFurnishing: (id: string, x: number, z: number) => void;
+  onCommitMoveFurnishing: (id: string, x: number, z: number) => void;
+  onPreviewMoveFurnishing: (id: string, x: number, z: number) => FurnitureMoveResult;
   onSelectFurnishing: (id: string | null) => void;
   selectedFurnishingId: string | null;
   visibleLevels: Set<string>;
@@ -98,8 +99,8 @@ export default function TwinViewer({
               decorating={decorating}
               gridSnapEnabled={gridSnapEnabled}
               onDragStateChange={setDraggingFurniture}
-              onBeginMoveFurnishing={onBeginMoveFurnishing}
-              onMoveFurnishing={onMoveFurnishing}
+              onCommitMoveFurnishing={onCommitMoveFurnishing}
+              onPreviewMoveFurnishing={onPreviewMoveFurnishing}
               onSelectFurnishing={onSelectFurnishing}
               selectedFurnishingId={selectedFurnishingId}
               wallCutaway={wallCutaway}
@@ -128,8 +129,8 @@ function LevelModel({
   furnishings,
   gridSnapEnabled,
   onDragStateChange,
-  onBeginMoveFurnishing,
-  onMoveFurnishing,
+  onCommitMoveFurnishing,
+  onPreviewMoveFurnishing,
   onSelectFurnishing,
   selectedFurnishingId,
   wallCutaway,
@@ -142,8 +143,8 @@ function LevelModel({
   furnishings: FurniturePlacement[];
   gridSnapEnabled: boolean;
   onDragStateChange: (dragging: boolean) => void;
-  onBeginMoveFurnishing: () => void;
-  onMoveFurnishing: (id: string, x: number, z: number) => void;
+  onCommitMoveFurnishing: (id: string, x: number, z: number) => void;
+  onPreviewMoveFurnishing: (id: string, x: number, z: number) => FurnitureMoveResult;
   onSelectFurnishing: (id: string | null) => void;
   selectedFurnishingId: string | null;
   wallCutaway: number;
@@ -182,8 +183,8 @@ function LevelModel({
           decorating={decorating}
           elevation={y}
           onDragStateChange={onDragStateChange}
-          onBeginMove={onBeginMoveFurnishing}
-          onMove={onMoveFurnishing}
+          onCommitMove={onCommitMoveFurnishing}
+          onPreviewMove={onPreviewMoveFurnishing}
           onSelect={onSelectFurnishing}
           placement={placement}
           selected={selectedFurnishingId === placement.id}
@@ -198,8 +199,8 @@ function PlacedFurnitureModel({
   decorating,
   elevation,
   onDragStateChange,
-  onBeginMove,
-  onMove,
+  onCommitMove,
+  onPreviewMove,
   onSelect,
   placement,
   selected,
@@ -207,15 +208,16 @@ function PlacedFurnitureModel({
   decorating: boolean;
   elevation: number;
   onDragStateChange: (dragging: boolean) => void;
-  onBeginMove: () => void;
-  onMove: (id: string, x: number, z: number) => void;
+  onCommitMove: (id: string, x: number, z: number) => void;
+  onPreviewMove: (id: string, x: number, z: number) => FurnitureMoveResult;
   onSelect: (id: string) => void;
   placement: FurniturePlacement;
   selected: boolean;
 }) {
   const floorY = elevation + 0.06;
   const [dragging, setDragging] = useState(false);
-  const moveStarted = useRef(false);
+  const [draft, setDraft] = useState<FurnitureMoveResult | null>(null);
+  const draftRef = useRef<FurnitureMoveResult | null>(null);
   const dragPlane = useMemo(() => new Plane(new Vector3(0, 1, 0), -floorY), [floorY]);
   const dragPoint = useMemo(() => new Vector3(), []);
   const item = furnitureCatalogItem(placement.catalogId);
@@ -229,7 +231,9 @@ function PlacedFurnitureModel({
     if (!decorating) return;
     event.stopPropagation();
     onSelect(placement.id);
-    moveStarted.current = false;
+    const initialDraft = { position: { x: placement.x, z: placement.z }, collision: null } satisfies FurnitureMoveResult;
+    draftRef.current = initialDraft;
+    setDraft(initialDraft);
     setDragging(true);
     onDragStateChange(true);
     (event.target as EventTarget & { setPointerCapture(pointerId: number): void }).setPointerCapture(event.pointerId);
@@ -237,35 +241,48 @@ function PlacedFurnitureModel({
   const drag = (event: ThreeEvent<PointerEvent>) => {
     if (!dragging || !decorating) return;
     event.stopPropagation();
-    if (!moveStarted.current) {
-      onBeginMove();
-      moveStarted.current = true;
+    if (event.ray.intersectPlane(dragPlane, dragPoint)) {
+      const preview = onPreviewMove(placement.id, dragPoint.x, dragPoint.z);
+      draftRef.current = preview;
+      setDraft(preview);
     }
-    if (event.ray.intersectPlane(dragPlane, dragPoint)) onMove(placement.id, dragPoint.x, dragPoint.z);
   };
-  const stopDragging = (event: ThreeEvent<PointerEvent>) => {
+  const stopDragging = (event: ThreeEvent<PointerEvent>, commit = true) => {
     if (!dragging) return;
     event.stopPropagation();
     setDragging(false);
     onDragStateChange(false);
     (event.target as EventTarget & { releasePointerCapture(pointerId: number): void }).releasePointerCapture(event.pointerId);
+    const finalDraft = draftRef.current;
+    if (commit && finalDraft) onCommitMove(placement.id, finalDraft.position.x, finalDraft.position.z);
+    draftRef.current = null;
+    setDraft(null);
   };
+  const renderPosition: FurniturePosition = draft?.position ?? placement;
+  const invalid = Boolean(draft?.collision);
   return (
     <group
-      position={[placement.x, floorY, placement.z]}
+      position={[renderPosition.x, floorY, renderPosition.z]}
       rotation={[0, placement.rotation, 0]}
       onClick={(event) => { if (decorating) { event.stopPropagation(); onSelect(placement.id); } }}
       onPointerDown={startDragging}
       onPointerMove={drag}
-      onPointerUp={stopDragging}
-      onPointerCancel={stopDragging}
+      onPointerUp={(event) => stopDragging(event)}
+      onPointerCancel={(event) => stopDragging(event, false)}
     >
       {selected && (
         <mesh position={[0, item.height / 2, 0]}>
           <boxGeometry args={[item.width + 0.08, item.height + 0.08, item.depth + 0.08]} />
-          <meshBasicMaterial color="#2457df" wireframe transparent opacity={0.72} depthWrite={false} />
+          <meshBasicMaterial color={invalid ? "#d62f2f" : "#2457df"} wireframe transparent opacity={0.8} depthWrite={false} />
         </mesh>
       )}
+      {invalid && (
+        <mesh position={[0, item.height / 2, 0]} renderOrder={4}>
+          <boxGeometry args={[item.width + 0.04, item.height + 0.04, item.depth + 0.04]} />
+          <meshBasicMaterial color="#e23636" transparent opacity={0.38} depthWrite={false} />
+        </mesh>
+      )}
+      <group scale={[placement.mirrored ? -1 : 1, 1, 1]}>
       {item.shape === "bed" ? <BedFurniture item={item} /> : item.shape === "table" ? <TableFurniture item={item} /> : item.shape === "chair" ? <ChairFurniture item={item} /> : <>
       {[-1, 1].flatMap((side) => [-1, 1].map((front) => (
         <mesh key={`${side}-${front}`} position={[side * (item.width / 2 - legInset), 0.08, bodyZ + front * (bodyDepth / 2 - 0.17)]} castShadow>
@@ -304,6 +321,7 @@ function PlacedFurnitureModel({
         </group>
       )}
       </>}
+      </group>
     </group>
   );
 }

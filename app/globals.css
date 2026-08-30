@@ -1448,6 +1448,7 @@ select:focus-visible {
 .turn-right { transform: rotate(-90deg); }
 .rotate-left { transform: scaleX(-1); }
 .placement-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 4px; }
+.placement-actions .mirror-furniture { grid-column: 1 / 3; }
 .placement-actions .back-to-catalogue { grid-column: 1 / 3; }
 .placement-actions .remove-furniture { grid-column: 1 / 3; border-color: #ce8a7c; color: #9e321d; background: #fff5f2; }
 .catalogue-list { display: flex; flex-direction: column; gap: 8px; }

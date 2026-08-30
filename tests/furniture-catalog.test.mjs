@@ -84,8 +84,39 @@ test("a furniture footprint cannot overlap a structural wall", () => {
   assert.deepEqual(validFurniturePosition(testChair, testLevel, 0, { x: -1, z: 0 }), { x: -1, z: 0 });
 });
 
-test("continuous drag sampling cannot teleport furniture through a wall", () => {
+test("drag previews can cross a wall when the final position is clear", () => {
   const result = resolveFurnitureMove(testChair, testLevel, 0, { x: -1.2, z: 0 }, { x: 1.2, z: 0 });
-  assert.equal(result.blockedByWall, true);
-  assert.ok(result.position.x < -0.45);
+  assert.equal(result.collision, null);
+  assert.deepEqual(result.position, { x: 1.2, z: 0 });
+});
+
+test("an invalid drag target is preserved for a red preview but cannot validate", () => {
+  const result = resolveFurnitureMove(testChair, testLevel, 0, { x: -1.2, z: 0 }, { x: 0, z: 0 });
+  assert.equal(result.collision, "wall");
+  assert.deepEqual(result.position, { x: 0, z: 0 });
+  assert.equal(validFurniturePosition(testChair, testLevel, 0, result.position), null);
+});
+
+test("door openings are pass-through paths but not valid final positions", () => {
+  const levelWithDoor = {
+    ...testLevel,
+    walls: [{
+      ...testLevel.walls[0],
+      openings: [{ kind: "door", offset: 2, width: 1, height: 2.1 }],
+    }],
+  };
+  assert.equal(resolveFurnitureMove(testChair, levelWithDoor, 0, { x: -1.2, z: 0 }, { x: 0, z: 0 }).collision, "door");
+  assert.equal(resolveFurnitureMove(testChair, levelWithDoor, 0, { x: -1.2, z: 0 }, { x: 1.2, z: 0 }).collision, null);
+});
+
+test("furniture, fixtures, and stairs are final-placement obstacles", () => {
+  const obstacle = { id: "placed", item: testChair, position: { x: -1, z: 0 }, rotation: 0 };
+  const occupiedLevel = {
+    ...testLevel,
+    fixtures: [{ id: "island", kind: "island", x: 1, z: -1, width: 1, depth: 1, rotation: 0, confidence: 1 }],
+    stairs: [{ id: "stairs", x: 1, z: 1, width: 1, depth: 1, runAxis: "horizontal", stepCount: 10, confidence: 1 }],
+  };
+  assert.equal(resolveFurnitureMove(testChair, occupiedLevel, 0, { x: -2, z: 0 }, { x: -1, z: 0 }, 0, [obstacle]).collision, "furniture");
+  assert.equal(resolveFurnitureMove(testChair, occupiedLevel, 0, { x: -2, z: 0 }, { x: 1, z: -1 }).collision, "fixture");
+  assert.equal(resolveFurnitureMove(testChair, occupiedLevel, 0, { x: -2, z: 0 }, { x: 1, z: 1 }).collision, "stair");
 });

@@ -17,6 +17,7 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
+  FlipHorizontal2,
   Grid3X3,
   ImageUp,
   Layers3,
@@ -62,6 +63,9 @@ import {
   findNearestValidFurniturePosition,
   resolveFurnitureMove,
   validFurniturePosition,
+  type FurnitureCollisionReason,
+  type FurnitureMoveResult,
+  type FurnitureObstacle,
 } from "./furniture-placement";
 import {
   addDocumentOpening,
@@ -316,6 +320,7 @@ export default function Home() {
       if (key === "arrowdown") nudgeFurnishing(selectedFurnishingId, 0, 0.1);
       if (key === "q") rotateFurnishing(selectedFurnishingId, -1);
       if (key === "e") rotateFurnishing(selectedFurnishingId, 1);
+      if (key === "m") mirrorFurnishing(selectedFurnishingId);
       if (key === "delete" || key === "backspace") removeFurnishing(selectedFurnishingId);
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -596,8 +601,21 @@ export default function Home() {
     setFurnitureHistory((current) => [...current.slice(-24), furnishings]);
   }
 
-  function beginFurnitureMove() {
-    rememberFurnitureLayout();
+  function furnitureObstacles(id: string, levelId: string): FurnitureObstacle[] {
+    return furnishings.flatMap((candidate) => {
+      if (candidate.id === id || candidate.levelId !== levelId) return [];
+      const item = furnitureCatalogItem(candidate.catalogId);
+      return item ? [{ id: candidate.id, item, position: candidate, rotation: candidate.rotation }] : [];
+    });
+  }
+
+  function collisionMessage(collision: FurnitureCollisionReason) {
+    if (collision === "wall") return "Placement overlaps a wall or window.";
+    if (collision === "door") return "Placement blocks a door.";
+    if (collision === "fixture") return "Placement overlaps a fixed house element.";
+    if (collision === "stair") return "Placement overlaps the stairs.";
+    if (collision === "furniture") return "Placement overlaps another piece of furniture.";
+    return "Choose a valid position on the floor.";
   }
 
   function undoFurnitureEdit() {
@@ -630,6 +648,7 @@ export default function Home() {
       placement.rotation,
       placement,
       gridSnapEnabled ? 0.1 : 0,
+      furnitureObstacles(placement.id, level.id),
     );
     if (!position) {
       setProjectMessage(`${item.name} does not fit in an open area on ${level.name}.`);
@@ -653,30 +672,42 @@ export default function Home() {
     if (placement) setActiveLevel(placement.levelId);
   }
 
-  function moveFurnishing(id: string, x: number, z: number) {
+  function previewFurnishingMove(id: string, x: number, z: number): FurnitureMoveResult {
     const placement = furnishings.find((candidate) => candidate.id === id);
     const item = placement ? furnitureCatalogItem(placement.catalogId) : undefined;
     const level = placement ? previewLevels.find((candidate) => candidate.id === placement.levelId) : undefined;
-    if (!placement || !item || !level) return;
-    const result = resolveFurnitureMove(
+    if (!placement || !item || !level) return { position: { x, z }, collision: "wall" };
+    return resolveFurnitureMove(
       item,
       level,
       placement.rotation,
       placement,
       { x, z },
       gridSnapEnabled ? 0.1 : 0,
+      furnitureObstacles(id, placement.levelId),
     );
+  }
+
+  function commitFurnishingMove(id: string, x: number, z: number) {
+    const placement = furnishings.find((candidate) => candidate.id === id);
+    if (!placement) return;
+    const preview = previewFurnishingMove(id, x, z);
+    if (preview.collision) {
+      setProjectMessage(`${collisionMessage(preview.collision)} Move through it, then release on a clear area.`);
+      return;
+    }
+    if (preview.position.x === placement.x && preview.position.z === placement.z) return;
+    rememberFurnitureLayout();
     setFurnishings((current) => current.map((candidate) => (
-      candidate.id === id ? { ...candidate, ...result.position } : candidate
+      candidate.id === id ? { ...candidate, ...preview.position } : candidate
     )));
-    if (result.blockedByWall) setProjectMessage("Placement stopped at the wall.");
+    setProjectMessage("Furniture placed.");
   }
 
   function nudgeFurnishing(id: string, deltaX: number, deltaZ: number) {
     const placement = furnishings.find((candidate) => candidate.id === id);
     if (!placement) return;
-    rememberFurnitureLayout();
-    moveFurnishing(id, placement.x + deltaX, placement.z + deltaZ);
+    commitFurnishingMove(id, placement.x + deltaX, placement.z + deltaZ);
   }
 
   function rotateFurnishing(id: string, direction: -1 | 1) {
@@ -692,6 +723,7 @@ export default function Home() {
       rotation,
       placement,
       gridSnapEnabled ? 0.1 : 0,
+      furnitureObstacles(id, placement.levelId),
     );
     if (!position) {
       setProjectMessage("There is not enough clearance to rotate here.");
@@ -701,6 +733,16 @@ export default function Home() {
     setFurnishings((current) => current.map((candidate) => (
       candidate.id === id ? { ...candidate, ...position, rotation } : candidate
     )));
+  }
+
+  function mirrorFurnishing(id: string) {
+    const placement = furnishings.find((candidate) => candidate.id === id);
+    if (!placement) return;
+    rememberFurnitureLayout();
+    setFurnishings((current) => current.map((candidate) => (
+      candidate.id === id ? { ...candidate, mirrored: !candidate.mirrored } : candidate
+    )));
+    setProjectMessage("Furniture mirrored.");
   }
 
   function removeFurnishing(id: string) {
@@ -730,15 +772,16 @@ export default function Home() {
         measureScale={measureScale}
         mobilePanel={mobilePanel}
         moveLevel={moveLevel}
-        moveFurnishing={moveFurnishing}
+        commitFurnishingMove={commitFurnishingMove}
+        previewFurnishingMove={previewFurnishingMove}
         nudgeFurnishing={nudgeFurnishing}
-        onBeginMoveFurnishing={beginFurnitureMove}
         previewLevels={previewLevels}
         shareProject={shareProject}
         projectMessage={projectMessage}
         regions={regions}
         renameLevel={renameLevel}
         removeFurnishing={removeFurnishing}
+        mirrorFurnishing={mirrorFurnishing}
         resizeLevelBoundary={resizeLevelBoundary}
         rotateFurnishing={rotateFurnishing}
         reverseLevelOrder={reverseLevelOrder}
@@ -868,15 +911,16 @@ function Workspace({
   imageUrl,
   measureScale,
   mobilePanel,
-  moveFurnishing,
+  commitFurnishingMove,
   moveLevel,
   nudgeFurnishing,
-  onBeginMoveFurnishing,
+  previewFurnishingMove,
   previewLevels,
   projectMessage,
   regions,
   renameLevel,
   removeFurnishing,
+  mirrorFurnishing,
   resizeLevelBoundary,
   reverseLevelOrder,
   rotateFurnishing,
@@ -920,15 +964,16 @@ function Workspace({
   imageUrl: string | null;
   measureScale: () => void;
   mobilePanel: "levels" | "canvas" | "details";
-  moveFurnishing: (id: string, x: number, z: number) => void;
+  commitFurnishingMove: (id: string, x: number, z: number) => void;
   moveLevel: (id: string, offset: -1 | 1) => void;
   nudgeFurnishing: (id: string, deltaX: number, deltaZ: number) => void;
-  onBeginMoveFurnishing: () => void;
+  previewFurnishingMove: (id: string, x: number, z: number) => FurnitureMoveResult;
   previewLevels: Level[];
   projectMessage: string | null;
   regions: SourceRegion[];
   renameLevel: (id: string, name: string) => void;
   removeFurnishing: (id: string) => void;
+  mirrorFurnishing: (id: string) => void;
   resizeLevelBoundary: (id: string, amount: number) => void;
   reverseLevelOrder: () => void;
   rotateFurnishing: (id: string, direction: -1 | 1) => void;
@@ -1071,8 +1116,8 @@ function Workspace({
                     furnishings={furnishings}
                     gridSnapEnabled={gridSnapEnabled}
                     levels={previewLevels}
-                    onBeginMoveFurnishing={onBeginMoveFurnishing}
-                    onMoveFurnishing={moveFurnishing}
+                    onCommitMoveFurnishing={commitFurnishingMove}
+                    onPreviewMoveFurnishing={previewFurnishingMove}
                     onSelectFurnishing={setSelectedFurnishingId}
                     selectedFurnishingId={selectedFurnishingId}
                     visibleLevels={visibleLevels}
@@ -1127,6 +1172,7 @@ function Workspace({
                   <>
                     <button onClick={() => setSelectedFurnishingId(null)}><ChevronLeft size={14} /> Back</button>
                     <button onClick={() => rotateFurnishing(selectedFurnishingId, 1)}><RotateCw size={14} /> Rotate</button>
+                    <button onClick={() => mirrorFurnishing(selectedFurnishingId)}><FlipHorizontal2 size={14} /> Mirror</button>
                     <button className="danger" onClick={() => removeFurnishing(selectedFurnishingId)}><Trash2 size={14} /> Delete</button>
                   </>
                 )}
@@ -1136,7 +1182,7 @@ function Workspace({
               {viewMode === "review"
                 ? <><ScanLine size={14} /> Tap a region to review that level</>
                 : viewMode === "furnish"
-                  ? <><Sofa size={14} /> Select furniture in the room or catalogue</>
+                  ? <><Sofa size={14} /> Drag freely · red means the final position is blocked</>
                   : <><Move3D size={14} /> Drag to orbit · Pinch to zoom</>}
             </div>
           </div>
@@ -1153,6 +1199,7 @@ function Workspace({
               nudgeFurnishing={nudgeFurnishing}
               projectMessage={projectMessage}
               removeFurnishing={removeFurnishing}
+              mirrorFurnishing={mirrorFurnishing}
               rotateFurnishing={rotateFurnishing}
               selectedFurnishingId={selectedFurnishingId}
               setGridSnapEnabled={setGridSnapEnabled}
@@ -1290,6 +1337,7 @@ function FurniturePanel({
   nudgeFurnishing,
   projectMessage,
   removeFurnishing,
+  mirrorFurnishing,
   rotateFurnishing,
   selectedFurnishingId,
   setGridSnapEnabled,
@@ -1304,6 +1352,7 @@ function FurniturePanel({
   nudgeFurnishing: (id: string, deltaX: number, deltaZ: number) => void;
   projectMessage: string | null;
   removeFurnishing: (id: string) => void;
+  mirrorFurnishing: (id: string) => void;
   rotateFurnishing: (id: string, direction: -1 | 1) => void;
   selectedFurnishingId: string | null;
   setGridSnapEnabled: (enabled: boolean) => void;
@@ -1338,7 +1387,7 @@ function FurniturePanel({
           <div className="selected-furniture-summary">
             <span><FurnitureItemIcon shape={selectedItem.shape} size={18} /></span>
             <strong>{selectedItem.name}</strong>
-            <small>{selectedItem.width.toFixed(2)} × {selectedItem.depth.toFixed(2)} m · selected</small>
+            <small>{selectedItem.width.toFixed(2)} × {selectedItem.depth.toFixed(2)} m · {selectedPlacement.mirrored ? "mirrored" : "standard"}</small>
             <button onClick={() => setSelectedFurnishingId(null)} aria-label="Clear furniture selection"><X size={13} /></button>
           </div>
           <div className="placement-controls" aria-label={`Position ${selectedItem.name}`}>
@@ -1355,6 +1404,7 @@ function FurniturePanel({
             <span className="placement-actions">
               <button onClick={() => rotateFurnishing(selectedPlacement.id, -1)}><RotateCw className="rotate-left" size={13} /> −15°</button>
               <button onClick={() => rotateFurnishing(selectedPlacement.id, 1)}><RotateCw size={13} /> +15°</button>
+              <button className="mirror-furniture" onClick={() => mirrorFurnishing(selectedPlacement.id)}><FlipHorizontal2 size={13} /> Mirror furniture</button>
               <button className="back-to-catalogue" onClick={() => setSelectedFurnishingId(null)}><ChevronLeft size={13} /> Back to catalogue</button>
               <button className="remove-furniture" onClick={() => removeFurnishing(selectedPlacement.id)}><Trash2 size={13} /> Delete furniture</button>
             </span>
@@ -1383,7 +1433,7 @@ function FurniturePanel({
         ))}
       </div>
 
-      <div className="catalogue-note"><ShieldCheck size={15} /><span>Dimensions come from the linked IKEA listings; meshes are original procedural previews, not redistributed IKEA models. Furniture stops at structural walls.</span></div>
+      <div className="catalogue-note"><ShieldCheck size={15} /><span>Drag freely through rooms. Overlaps turn red and snap back unless released on a clear area. Keyboard: arrows move, Q/E rotate, M mirrors, Delete removes.</span></div>
     </div>
   );
 }
