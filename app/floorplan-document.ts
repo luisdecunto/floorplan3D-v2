@@ -1,5 +1,6 @@
 import { resequenceRegions, type SourceRegion } from "./plan-regions.ts";
 import type { Level } from "./scene-data";
+import type { FurniturePlacement } from "./furniture-catalog";
 import {
   alignAdjacentStairStructures,
   resolveScaleFromDoors,
@@ -82,6 +83,7 @@ export type FloorplanDocumentV2 = {
   issues: ReviewIssue[];
   edits: FloorplanEdit[];
   scale: ProjectScale;
+  furnishings?: FurniturePlacement[];
 };
 
 /**
@@ -225,6 +227,7 @@ export function createFloorplanDocumentV2({
     issues: buildIssues(levels, scale),
     edits: [],
     scale,
+    furnishings: [],
   };
 }
 
@@ -428,5 +431,16 @@ export function validateFloorplanDocument(value: unknown): FloorplanDocumentV2 {
   if (!candidate.scale) {
     candidate.scale = { metresPerPixel: 0, source: "provisional", confidence: 0 };
   }
+  candidate.furnishings = Array.isArray(candidate.furnishings)
+    ? candidate.furnishings.filter((placement) => (
+      placement
+      && typeof placement.id === "string"
+      && typeof placement.catalogId === "string"
+      && typeof placement.levelId === "string"
+      && Number.isFinite(placement.x)
+      && Number.isFinite(placement.z)
+      && Number.isFinite(placement.rotation)
+    ))
+    : [];
   return candidate as FloorplanDocumentV2;
 }

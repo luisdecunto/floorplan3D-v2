@@ -3,9 +3,9 @@
 /* eslint-disable react/no-unknown-property */
 
 import { ContactShadows, OrbitControls } from "@react-three/drei";
-import { Canvas, useLoader } from "@react-three/fiber";
+import { Canvas, type ThreeEvent, useLoader } from "@react-three/fiber";
 import { ReactNode, useEffect, useMemo, useState } from "react";
-import { SRGBColorSpace, TextureLoader } from "three";
+import { Plane, SRGBColorSpace, TextureLoader, Vector3 } from "three";
 import {
   buildStairConnections,
   sceneFootprint,
@@ -17,6 +17,7 @@ import {
   type StairwellOpening,
 } from "./scene-geometry";
 import { type Fixture, type Level, type Opening, type OutdoorArea, type Wall } from "./scene-data";
+import { furnitureCatalogItem, type FurniturePlacement } from "./furniture-catalog";
 import {
   activateRailSpans,
   clampWallGapsToRails,
@@ -25,13 +26,23 @@ import {
 } from "./stairwell-rails";
 
 export default function TwinViewer({
+  decorating,
   exploded,
+  furnishings,
   levels,
+  onMoveFurnishing,
+  onSelectFurnishing,
+  selectedFurnishingId,
   visibleLevels,
   wallCutaway,
 }: {
+  decorating: boolean;
   exploded: boolean;
+  furnishings: FurniturePlacement[];
   levels: Level[];
+  onMoveFurnishing: (id: string, x: number, z: number) => void;
+  onSelectFurnishing: (id: string | null) => void;
+  selectedFurnishingId: string | null;
   visibleLevels: Set<string>;
   wallCutaway: number;
 }) {
@@ -41,6 +52,7 @@ export default function TwinViewer({
   const [compact] = useState(() => (
     typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches
   ));
+  const [draggingFurniture, setDraggingFurniture] = useState(false);
   const explodeDistance = exploded ? 2.35 : 0;
   const stairConnections = buildStairConnections(levels, explodeDistance);
   const stairOpenings = new Map(stairConnections.map((connection) => [connection.upperLevelId, connection.opening]));
@@ -59,6 +71,7 @@ export default function TwinViewer({
         shadows={!compact}
         dpr={compact ? [1, 1.5] : [1, 1.75]}
         camera={{ position: [footprint.centerX + 12, 10, footprint.centerZ + 14], fov: 36, near: 0.1, far: 100 }}
+        onPointerMissed={() => decorating && onSelectFurnishing(null)}
       >
         <color attach="background" args={["#ebe9e1"]} />
         <ambientLight intensity={1.25} />
@@ -77,6 +90,12 @@ export default function TwinViewer({
               opening={index > 0 ? stairOpenings.get(level.id) ?? stairwellOpening(level) : null}
               access={index > 0 ? stairAccess.get(level.id) ?? null : null}
               explodeOffset={index * explodeDistance}
+              furnishings={furnishings.filter((placement) => placement.levelId === level.id)}
+              decorating={decorating}
+              onDragStateChange={setDraggingFurniture}
+              onMoveFurnishing={onMoveFurnishing}
+              onSelectFurnishing={onSelectFurnishing}
+              selectedFurnishingId={selectedFurnishingId}
               wallCutaway={wallCutaway}
             />
           ))}
@@ -87,7 +106,7 @@ export default function TwinViewer({
           ))}
           <ContactShadows position={[0, -0.03, 0]} opacity={0.24} scale={24} blur={2.8} far={12} />
         </group>
-        <OrbitControls makeDefault minDistance={7} maxDistance={30} minPolarAngle={0.35} maxPolarAngle={Math.PI / 2.05} target={[footprint.centerX, 2.2, footprint.centerZ]} />
+        <OrbitControls enabled={!draggingFurniture} makeDefault minDistance={7} maxDistance={30} minPolarAngle={0.35} maxPolarAngle={Math.PI / 2.05} target={[footprint.centerX, 2.2, footprint.centerZ]} />
       </Canvas>
       <div className="viewer-legend"><span><i className="legend-wall" /> Structure</span><span><i className="legend-door" /> Doors</span><span><i className="legend-window" /> Windows</span><span><i className="legend-stair" /> Stairs</span><span><i className="legend-outdoor" /> Balcony</span><span><i className="legend-fixture" /> Fixtures</span><span><i className="legend-detail" /> Plan details</span></div>
     </div>
@@ -95,16 +114,28 @@ export default function TwinViewer({
 }
 
 function LevelModel({
+  decorating,
   level,
   opening,
   access,
   explodeOffset,
+  furnishings,
+  onDragStateChange,
+  onMoveFurnishing,
+  onSelectFurnishing,
+  selectedFurnishingId,
   wallCutaway,
 }: {
+  decorating: boolean;
   level: Level;
   opening: StairwellOpening | null;
   access: { point: [number, number]; width: number } | null;
   explodeOffset: number;
+  furnishings: FurniturePlacement[];
+  onDragStateChange: (dragging: boolean) => void;
+  onMoveFurnishing: (id: string, x: number, z: number) => void;
+  onSelectFurnishing: (id: string | null) => void;
+  selectedFurnishingId: string | null;
   wallCutaway: number;
 }) {
   const y = level.elevation + explodeOffset;
@@ -124,7 +155,123 @@ function LevelModel({
       {opening && <StairwellTrim segments={railSegments} elevation={y} />}
       {(level.outdoorAreas ?? []).map((area) => <OutdoorAreaModel key={area.id} area={area} elevation={y} />)}
       {(level.fixtures ?? []).map((fixture) => <FurnitureModel key={fixture.id} fixture={fixture} elevation={y} />)}
+      {furnishings.map((placement) => (
+        <PlacedFurnitureModel
+          key={placement.id}
+          decorating={decorating}
+          elevation={y}
+          onDragStateChange={onDragStateChange}
+          onMove={onMoveFurnishing}
+          onSelect={onSelectFurnishing}
+          placement={placement}
+          selected={selectedFurnishingId === placement.id}
+        />
+      ))}
       {walls.map((wall) => <WallModel key={wall.id} wall={wall} elevation={y} levelHeight={level.ceilingHeight} wallCutaway={wallCutaway} />)}
+    </group>
+  );
+}
+
+function PlacedFurnitureModel({
+  decorating,
+  elevation,
+  onDragStateChange,
+  onMove,
+  onSelect,
+  placement,
+  selected,
+}: {
+  decorating: boolean;
+  elevation: number;
+  onDragStateChange: (dragging: boolean) => void;
+  onMove: (id: string, x: number, z: number) => void;
+  onSelect: (id: string) => void;
+  placement: FurniturePlacement;
+  selected: boolean;
+}) {
+  const floorY = elevation + 0.06;
+  const [dragging, setDragging] = useState(false);
+  const dragPlane = useMemo(() => new Plane(new Vector3(0, 1, 0), -floorY), [floorY]);
+  const dragPoint = useMemo(() => new Vector3(), []);
+  const item = furnitureCatalogItem(placement.catalogId);
+  if (!item) return null;
+  const bodyDepth = item.bodyDepth ?? item.depth;
+  const bodyZ = item.shape === "chaise" ? (item.depth - bodyDepth) / 2 : 0;
+  const armWidth = Math.min(0.24, item.width * 0.14);
+  const cushionWidth = Math.max(0.25, item.width - armWidth * 2 - 0.06);
+  const legInset = Math.min(0.24, item.width * 0.18);
+  const startDragging = (event: ThreeEvent<PointerEvent>) => {
+    if (!decorating) return;
+    event.stopPropagation();
+    onSelect(placement.id);
+    setDragging(true);
+    onDragStateChange(true);
+    (event.target as EventTarget & { setPointerCapture(pointerId: number): void }).setPointerCapture(event.pointerId);
+  };
+  const drag = (event: ThreeEvent<PointerEvent>) => {
+    if (!dragging || !decorating) return;
+    event.stopPropagation();
+    if (event.ray.intersectPlane(dragPlane, dragPoint)) onMove(placement.id, dragPoint.x, dragPoint.z);
+  };
+  const stopDragging = (event: ThreeEvent<PointerEvent>) => {
+    if (!dragging) return;
+    event.stopPropagation();
+    setDragging(false);
+    onDragStateChange(false);
+    (event.target as EventTarget & { releasePointerCapture(pointerId: number): void }).releasePointerCapture(event.pointerId);
+  };
+  return (
+    <group
+      position={[placement.x, floorY, placement.z]}
+      rotation={[0, placement.rotation, 0]}
+      onClick={(event) => { if (decorating) { event.stopPropagation(); onSelect(placement.id); } }}
+      onPointerDown={startDragging}
+      onPointerMove={drag}
+      onPointerUp={stopDragging}
+      onPointerCancel={stopDragging}
+    >
+      {selected && (
+        <mesh position={[0, item.height / 2, 0]}>
+          <boxGeometry args={[item.width + 0.08, item.height + 0.08, item.depth + 0.08]} />
+          <meshBasicMaterial color="#2457df" wireframe transparent opacity={0.72} depthWrite={false} />
+        </mesh>
+      )}
+      {[-1, 1].flatMap((side) => [-1, 1].map((front) => (
+        <mesh key={`${side}-${front}`} position={[side * (item.width / 2 - legInset), 0.08, bodyZ + front * (bodyDepth / 2 - 0.17)]} castShadow>
+          <cylinderGeometry args={[0.035, 0.045, 0.16, 8]} />
+          <meshStandardMaterial color="#4b3b2d" roughness={0.72} />
+        </mesh>
+      )))}
+      <mesh position={[0, 0.22, bodyZ]} castShadow receiveShadow>
+        <boxGeometry args={[item.width, 0.28, Math.max(0.42, bodyDepth - 0.14)]} />
+        <meshStandardMaterial color={item.accentColor} roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 0.42, bodyZ - bodyDepth * 0.08]} castShadow receiveShadow>
+        <boxGeometry args={[cushionWidth, 0.16, Math.max(0.34, bodyDepth * 0.62)]} />
+        <meshStandardMaterial color={item.color} roughness={0.96} />
+      </mesh>
+      <mesh position={[0, 0.3 + (item.height - 0.3) / 2, bodyZ + bodyDepth / 2 - 0.1]} castShadow receiveShadow>
+        <boxGeometry args={[item.width, item.height - 0.3, 0.2]} />
+        <meshStandardMaterial color={item.color} roughness={0.96} />
+      </mesh>
+      {[-1, 1].map((side) => (
+        <mesh key={side} position={[side * (item.width / 2 - armWidth / 2), 0.45, bodyZ - 0.02]} castShadow receiveShadow>
+          <boxGeometry args={[armWidth, 0.54, Math.max(0.42, bodyDepth - 0.12)]} />
+          <meshStandardMaterial color={item.color} roughness={0.96} />
+        </mesh>
+      ))}
+      {item.shape === "chaise" && (
+        <group position={[-item.width * 0.31, 0, -(item.depth - bodyDepth) / 2]}>
+          <mesh position={[0, 0.22, 0]} castShadow receiveShadow>
+            <boxGeometry args={[item.width * 0.34, 0.28, item.depth - 0.16]} />
+            <meshStandardMaterial color={item.accentColor} roughness={0.9} />
+          </mesh>
+          <mesh position={[0, 0.42, -0.03]} castShadow receiveShadow>
+            <boxGeometry args={[item.width * 0.31, 0.16, item.depth - 0.22]} />
+            <meshStandardMaterial color={item.color} roughness={0.96} />
+          </mesh>
+        </group>
+      )}
     </group>
   );
 }

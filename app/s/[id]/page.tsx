@@ -62,8 +62,13 @@ export default function SharePage({ params }: { params: { id: string } }) {
       <div style={{ flex: 1, position: "relative" }}>
         <Suspense fallback={<div style={{ padding: "2rem", textAlign: "center", color: "var(--text-secondary, #888)" }}>Loading 3D view…</div>}>
           <TwinViewer
+            decorating={false}
             levels={levels.length > 0 ? levels : sampleLevels}
             exploded={false}
+            furnishings={document.furnishings ?? []}
+            onMoveFurnishing={() => undefined}
+            onSelectFurnishing={() => undefined}
+            selectedFurnishingId={null}
             wallCutaway={1}
             visibleLevels={new Set((levels.length > 0 ? levels : sampleLevels).map((l) => l.id))}
           />
