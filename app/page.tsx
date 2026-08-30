@@ -7,6 +7,8 @@ import {
   ArrowRight,
   ArrowUp,
   ArrowUpDown,
+  Armchair,
+  BedDouble,
   Box,
   Check,
   ChevronLeft,
@@ -14,6 +16,7 @@ import {
   Download,
   Eye,
   EyeOff,
+  ExternalLink,
   Grid3X3,
   ImageUp,
   Layers3,
@@ -33,6 +36,7 @@ import {
   Sofa,
   Smartphone,
   Sparkles,
+  Table2,
   Trash2,
   Undo2,
   Upload,
@@ -1315,7 +1319,7 @@ function FurniturePanel({
         <div><span className="panel-kicker">Furniture library</span><h2>Place to scale</h2></div>
         <span className="furniture-count">{levelFurniture.length} placed</span>
       </div>
-      <p className="panel-intro">Starter sofas use exact metric footprints and lightweight procedural models. Licensed branded GLBs can replace them later.</p>
+      <p className="panel-intro">IKEA starters use verified metric footprints and lightweight procedural previews. Open the product link to compare the current IKEA listing.</p>
       <div className="furniture-edit-toolbar">
         <label className="grid-snap-toggle panel-grid-toggle">
           <input
@@ -1332,7 +1336,7 @@ function FurniturePanel({
       {selectedItem && selectedPlacement && (
         <div className="selected-furniture-card">
           <div className="selected-furniture-summary">
-            <span><Sofa size={18} /></span>
+            <span><FurnitureItemIcon shape={selectedItem.shape} size={18} /></span>
             <strong>{selectedItem.name}</strong>
             <small>{selectedItem.width.toFixed(2)} × {selectedItem.depth.toFixed(2)} m · selected</small>
             <button onClick={() => setSelectedFurnishingId(null)} aria-label="Clear furniture selection"><X size={13} /></button>
@@ -1359,23 +1363,36 @@ function FurniturePanel({
       )}
 
       <div className="catalogue-list">
-        {FURNITURE_CATALOG.map((item) => (
-          <article className="catalogue-card" key={item.id}>
-            <span className="catalogue-icon" style={{ background: item.color }}><Sofa size={22} /></span>
-            <span className="catalogue-copy">
-              <small>{item.collection}</small>
-              <strong>{item.name}</strong>
-              <em>W {item.width.toFixed(2)} · D {item.depth.toFixed(2)} · H {item.height.toFixed(2)} m</em>
-              <span>{item.upholstery}</span>
-            </span>
-            <button onClick={() => addFurnishing(item)} aria-label={`Add ${item.name} to ${activeLevel.name}`}><Plus size={12} /> Add</button>
-          </article>
+        {(["Sofas", "Beds", "Tables", "Chairs"] as const).map((category) => (
+          <section className="catalogue-group" key={category}>
+            <h3>{category}</h3>
+            {FURNITURE_CATALOG.filter((item) => item.category === category).map((item) => (
+              <article className="catalogue-card" key={item.id}>
+                <span className="catalogue-icon" style={{ background: item.color }}><FurnitureItemIcon shape={item.shape} size={22} /></span>
+                <span className="catalogue-copy">
+                  <small>{item.collection}</small>
+                  <strong>{item.name}</strong>
+                  <em>W {item.width.toFixed(2)} · D {item.depth.toFixed(2)} · H {item.height.toFixed(2)} m</em>
+                  <span>{item.upholstery}</span>
+                  {item.sourceUrl && <a href={item.sourceUrl} target="_blank" rel="noreferrer">View at IKEA <ExternalLink size={9} /></a>}
+                </span>
+                <button onClick={() => addFurnishing(item)} aria-label={`Add ${item.name} to ${activeLevel.name}`}><Plus size={12} /> Add</button>
+              </article>
+            ))}
+          </section>
         ))}
       </div>
 
-      <div className="catalogue-note"><ShieldCheck size={15} /><span>Furniture stops at structural walls. Drag it on the floor or use the 10 cm controls. Keyboard: arrows move, Q/E rotate, Delete removes.</span></div>
+      <div className="catalogue-note"><ShieldCheck size={15} /><span>Dimensions come from the linked IKEA listings; meshes are original procedural previews, not redistributed IKEA models. Furniture stops at structural walls.</span></div>
     </div>
   );
+}
+
+function FurnitureItemIcon({ shape, size }: { shape: FurnitureCatalogItem["shape"]; size: number }) {
+  if (shape === "bed") return <BedDouble size={size} />;
+  if (shape === "table") return <Table2 size={size} />;
+  if (shape === "chair" || shape === "armchair") return <Armchair size={size} />;
+  return <Sofa size={size} />;
 }
 
 const clampNumber = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));

@@ -16,10 +16,24 @@ test("starter furniture has unique IDs and positive real-world dimensions", () =
   assert.equal(new Set(FURNITURE_CATALOG.map(({ id }) => id)).size, FURNITURE_CATALOG.length);
   assert.ok(FURNITURE_CATALOG.length >= 5);
   for (const item of FURNITURE_CATALOG) {
-    assert.ok(item.width > 0.5);
-    assert.ok(item.depth > 0.5);
-    assert.ok(item.height > 0.5);
+    assert.ok(item.width > 0.25);
+    assert.ok(item.depth > 0.25);
+    assert.ok(item.height > 0.25);
   }
+});
+
+test("IKEA starter set includes verified furniture categories and FRIHETEN dimensions", () => {
+  const friheten = FURNITURE_CATALOG.find(({ articleNumber }) => articleNumber === "392.167.54");
+  assert.ok(friheten);
+  assert.deepEqual(
+    { width: friheten.width, depth: friheten.depth, height: friheten.height },
+    { width: 2.3, depth: 1.51, height: 0.86 },
+  );
+  assert.match(friheten.sourceUrl, /ikea\.com\/dk\/da\/p\/friheten/);
+  assert.deepEqual(
+    new Set(FURNITURE_CATALOG.filter(({ articleNumber }) => articleNumber).map(({ category }) => category)),
+    new Set(["Sofas", "Beds", "Tables", "Chairs"]),
+  );
 });
 
 test("rotated furniture swaps its axis-aligned metric footprint", () => {
@@ -48,6 +62,7 @@ const testChair = {
   id: "test-chair",
   name: "Test chair",
   collection: "Tests",
+  category: "Chairs",
   shape: "armchair",
   width: 0.8,
   depth: 0.8,

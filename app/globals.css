@@ -1451,6 +1451,18 @@ select:focus-visible {
 .placement-actions .back-to-catalogue { grid-column: 1 / 3; }
 .placement-actions .remove-furniture { grid-column: 1 / 3; border-color: #ce8a7c; color: #9e321d; background: #fff5f2; }
 .catalogue-list { display: flex; flex-direction: column; gap: 8px; }
+.catalogue-group { display: flex; flex-direction: column; gap: 7px; }
+.catalogue-group + .catalogue-group { margin-top: 8px; }
+.catalogue-group > h3 {
+  margin: 0;
+  padding: 4px 0 3px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
 .catalogue-card {
   min-width: 0;
   padding: 9px;
@@ -1467,6 +1479,18 @@ select:focus-visible {
 .catalogue-copy strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 10px; }
 .catalogue-copy em { font-size: 8px; font-style: normal; font-variant-numeric: tabular-nums; color: var(--blue); }
 .catalogue-copy > span { font-size: 8px; color: var(--muted); }
+.catalogue-copy > a {
+  width: fit-content;
+  margin-top: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--blue);
+  font-size: 8px;
+  font-weight: 850;
+  text-decoration: none;
+}
+.catalogue-copy > a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .catalogue-card > button {
   min-width: 40px;
   height: 30px;
