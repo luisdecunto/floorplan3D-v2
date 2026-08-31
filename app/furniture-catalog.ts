@@ -1,29 +1,6 @@
 export type FurnitureShape = "sofa" | "chaise" | "armchair" | "bed" | "table" | "chair";
 export type FurnitureCategory = "Sofas" | "Beds" | "Tables" | "Chairs";
 
-/**
- * Provenance for whatever asset actually renders this item.
- * "procedural-only" covers every catalogue entry today: a few reference real
- * manufacturer products (name/dimensions/sourceUrl) purely as a dimensional
- * source, but the rendered geometry is original code, not a redistributed
- * mesh. A `glbUrl` should only ever point at a mesh you own or that carries
- * a license permitting redistribution in this app — see public/models/README.md.
- */
-export type FurnitureLicenseType = "procedural-only" | "cc0" | "cc-by" | "cc-by-sa" | "owned" | "purchased-license";
-
-export type FurnitureLicense = {
-  type: FurnitureLicenseType;
-  owner?: string;
-  attributionUrl?: string;
-  notes?: string;
-};
-
-/** Overrides the collision rectangle without changing the rendered/visual size. */
-export type FurnitureFootprintOverride = {
-  width: number;
-  depth: number;
-};
-
 export type FurnitureCatalogItem = {
   id: string;
   name: string;
@@ -35,21 +12,10 @@ export type FurnitureCatalogItem = {
   height: number;
   bodyDepth?: number;
   upholstery: string;
-  materials: string[];
-  colorways?: string[];
   color: string;
   accentColor: string;
   articleNumber?: string;
   sourceUrl?: string;
-  license: FurnitureLicense;
-  /**
-   * Path to a GLB, relative to the app's public root (e.g. "models/chairs/foo.glb"),
-   * or an absolute https URL. Omit to use the procedural renderer. See
-   * resolveFurnitureAssetUrl in furniture-model-fit.ts for how it's resolved
-   * under the GitHub Pages base path.
-   */
-  glbUrl?: string;
-  footprint?: FurnitureFootprintOverride;
 };
 
 export type FurniturePlacement = {
@@ -62,14 +28,11 @@ export type FurniturePlacement = {
   mirrored?: boolean;
 };
 
-const PROCEDURAL_ONLY: FurnitureLicense = { type: "procedural-only" };
-
 /**
  * Procedural, dimension-first prototype furniture. These entries intentionally
  * avoid redistributing a manufacturer's mesh while the branded catalogue
  * licensing path is being established. A licensed GLB can later replace each
- * procedural renderer (by setting `glbUrl` + updating `license`) without
- * changing placement or project data.
+ * procedural renderer without changing placement or project data.
  */
 export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
   {
@@ -83,12 +46,10 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     bodyDepth: 0.88,
     height: 0.86,
     upholstery: "Skiftebo dark grey",
-    materials: ["Polyester weave upholstery", "Painted steel frame"],
     color: "#656563",
     accentColor: "#4f504f",
     articleNumber: "392.167.54",
     sourceUrl: "https://www.ikea.com/dk/da/p/friheten-hjornesovesofa-med-opbevaring-skiftebo-morkegra-s39216754/",
-    license: { ...PROCEDURAL_ONLY, notes: "Dimensions and product reference from IKEA; renderer is original, no manufacturer mesh used." },
   },
   {
     id: "ikea-malm-160-09929373",
@@ -100,12 +61,10 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     depth: 2.09,
     height: 1,
     upholstery: "White finish · mattress 160 × 200 cm",
-    materials: ["Painted engineered wood"],
     color: "#eee9df",
     accentColor: "#d2cec5",
     articleNumber: "099.293.73",
     sourceUrl: "https://www.ikea.com/dk/da/p/malm-sengestel-hojt-hvid-s09929373/",
-    license: { ...PROCEDURAL_ONLY, notes: "Dimensions and product reference from IKEA; renderer is original, no manufacturer mesh used." },
   },
   {
     id: "ikea-neiden-70395239",
@@ -117,12 +76,10 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     depth: 2.05,
     height: 0.65,
     upholstery: "Solid pine · mattress 140 × 200 cm",
-    materials: ["Solid pine"],
     color: "#cda979",
     accentColor: "#a77e50",
     articleNumber: "703.952.39",
     sourceUrl: "https://www.ikea.com/dk/da/p/neiden-sengestel-fyr-70395239/",
-    license: { ...PROCEDURAL_ONLY, notes: "Dimensions and product reference from IKEA; renderer is original, no manufacturer mesh used." },
   },
   {
     id: "ikea-lisabo-table-80382439",
@@ -134,12 +91,10 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     depth: 0.78,
     height: 0.74,
     upholstery: "Black ash veneer",
-    materials: ["Ash veneer", "Painted steel legs"],
     color: "#30302e",
     accentColor: "#1f201f",
     articleNumber: "803.824.39",
     sourceUrl: "https://www.ikea.com/dk/da/p/lisabo-bord-sort-asketraesfiner-80382439/",
-    license: { ...PROCEDURAL_ONLY, notes: "Dimensions and product reference from IKEA; renderer is original, no manufacturer mesh used." },
   },
   {
     id: "ikea-lack-table-40104294",
@@ -151,12 +106,10 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     depth: 0.55,
     height: 0.45,
     upholstery: "Black-brown finish",
-    materials: ["Particleboard", "Foil finish"],
     color: "#3a3029",
     accentColor: "#251f1b",
     articleNumber: "401.042.94",
     sourceUrl: "https://www.ikea.com/dk/da/p/lack-sofabord-sortbrun-40104294/",
-    license: { ...PROCEDURAL_ONLY, notes: "Dimensions and product reference from IKEA; renderer is original, no manufacturer mesh used." },
   },
   {
     id: "ikea-lisabo-chair-60446786",
@@ -168,12 +121,10 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     depth: 0.51,
     height: 0.8,
     upholstery: "Black ash veneer and birch",
-    materials: ["Ash veneer", "Birch"],
     color: "#343331",
     accentColor: "#242321",
     articleNumber: "604.467.86",
     sourceUrl: "https://www.ikea.com/dk/da/p/lisabo-stol-sort-60446786/",
-    license: { ...PROCEDURAL_ONLY, notes: "Dimensions and product reference from IKEA; renderer is original, no manufacturer mesh used." },
   },
   {
     id: "ikea-teodores-chair-20530621",
@@ -185,12 +136,10 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     depth: 0.54,
     height: 0.8,
     upholstery: "Black polypropylene and steel",
-    materials: ["Polypropylene", "Steel"],
     color: "#292a2a",
     accentColor: "#171818",
     articleNumber: "205.306.21",
     sourceUrl: "https://www.ikea.com/dk/da/p/teodores-stol-sort-20530621/",
-    license: { ...PROCEDURAL_ONLY, notes: "Dimensions and product reference from IKEA; renderer is original, no manufacturer mesh used." },
   },
   {
     id: "haven-compact-2",
@@ -202,10 +151,8 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     depth: 0.88,
     height: 0.82,
     upholstery: "Warm grey weave",
-    materials: ["Polyester weave upholstery", "Painted wood frame"],
     color: "#8c8a82",
     accentColor: "#6f6d67",
-    license: PROCEDURAL_ONLY,
   },
   {
     id: "haven-wide-3",
@@ -217,10 +164,8 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     depth: 0.92,
     height: 0.83,
     upholstery: "Moss green weave",
-    materials: ["Polyester weave upholstery", "Painted wood frame"],
     color: "#667668",
     accentColor: "#4e5c51",
-    license: PROCEDURAL_ONLY,
   },
   {
     id: "harbor-chaise",
@@ -233,10 +178,8 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     bodyDepth: 0.94,
     height: 0.84,
     upholstery: "Deep blue twill",
-    materials: ["Twill upholstery", "Painted wood frame"],
     color: "#53687b",
     accentColor: "#3f5060",
-    license: PROCEDURAL_ONLY,
   },
   {
     id: "drift-sleeper",
@@ -248,10 +191,8 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     depth: 0.95,
     height: 0.86,
     upholstery: "Natural linen",
-    materials: ["Linen upholstery", "Painted wood frame"],
     color: "#b7aa95",
     accentColor: "#918571",
-    license: PROCEDURAL_ONLY,
   },
   {
     id: "cove-armchair",
@@ -263,10 +204,8 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     depth: 0.88,
     height: 0.86,
     upholstery: "Clay bouclé",
-    materials: ["Bouclé upholstery", "Painted wood frame"],
     color: "#ae745d",
     accentColor: "#8c5947",
-    license: PROCEDURAL_ONLY,
   },
 ];
 
@@ -274,18 +213,12 @@ export function furnitureCatalogItem(catalogId: string) {
   return FURNITURE_CATALOG.find((item) => item.id === catalogId);
 }
 
-/** The rectangle used for collision, before rotation: `footprint` if set, else the visual width/depth. */
-export function furnitureCollisionSize(item: FurnitureCatalogItem) {
-  return item.footprint ?? { width: item.width, depth: item.depth };
-}
-
 export function furnitureFootprint(item: FurnitureCatalogItem, rotation: number) {
-  const size = furnitureCollisionSize(item);
   const cosine = Math.abs(Math.cos(rotation));
   const sine = Math.abs(Math.sin(rotation));
   return {
-    width: size.width * cosine + size.depth * sine,
-    depth: size.width * sine + size.depth * cosine,
+    width: item.width * cosine + item.depth * sine,
+    depth: item.width * sine + item.depth * cosine,
   };
 }
 

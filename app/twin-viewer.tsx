@@ -17,8 +17,7 @@ import {
   type StairwellOpening,
 } from "./scene-geometry";
 import { type Fixture, type Level, type Opening, type OutdoorArea, type Wall } from "./scene-data";
-import { furnitureCatalogItem, furnitureCollisionSize, type FurniturePlacement } from "./furniture-catalog";
-import { FurnitureAssetModel } from "./furniture-model";
+import { furnitureCatalogItem, type FurnitureCatalogItem, type FurniturePlacement } from "./furniture-catalog";
 import type { FurnitureMoveResult, FurniturePosition } from "./furniture-placement";
 import {
   activateRailSpans,
@@ -223,7 +222,11 @@ function PlacedFurnitureModel({
   const dragPoint = useMemo(() => new Vector3(), []);
   const item = furnitureCatalogItem(placement.catalogId);
   if (!item) return null;
-  const collisionSize = furnitureCollisionSize(item);
+  const bodyDepth = item.bodyDepth ?? item.depth;
+  const bodyZ = item.shape === "chaise" ? (item.depth - bodyDepth) / 2 : 0;
+  const armWidth = Math.min(0.24, item.width * 0.14);
+  const cushionWidth = Math.max(0.25, item.width - armWidth * 2 - 0.06);
+  const legInset = Math.min(0.24, item.width * 0.18);
   const startDragging = (event: ThreeEvent<PointerEvent>) => {
     if (!decorating) return;
     event.stopPropagation();
@@ -269,19 +272,131 @@ function PlacedFurnitureModel({
     >
       {selected && (
         <mesh position={[0, item.height / 2, 0]}>
-          <boxGeometry args={[collisionSize.width + 0.08, item.height + 0.08, collisionSize.depth + 0.08]} />
+          <boxGeometry args={[item.width + 0.08, item.height + 0.08, item.depth + 0.08]} />
           <meshBasicMaterial color={invalid ? "#d62f2f" : "#2457df"} wireframe transparent opacity={0.8} depthWrite={false} />
         </mesh>
       )}
       {invalid && (
         <mesh position={[0, item.height / 2, 0]} renderOrder={4}>
-          <boxGeometry args={[collisionSize.width + 0.04, item.height + 0.04, collisionSize.depth + 0.04]} />
+          <boxGeometry args={[item.width + 0.04, item.height + 0.04, item.depth + 0.04]} />
           <meshBasicMaterial color="#e23636" transparent opacity={0.38} depthWrite={false} />
         </mesh>
       )}
       <group scale={[placement.mirrored ? -1 : 1, 1, 1]}>
-        <FurnitureAssetModel item={item} />
+      {item.shape === "bed" ? <BedFurniture item={item} /> : item.shape === "table" ? <TableFurniture item={item} /> : item.shape === "chair" ? <ChairFurniture item={item} /> : <>
+      {[-1, 1].flatMap((side) => [-1, 1].map((front) => (
+        <mesh key={`${side}-${front}`} position={[side * (item.width / 2 - legInset), 0.08, bodyZ + front * (bodyDepth / 2 - 0.17)]} castShadow>
+          <cylinderGeometry args={[0.035, 0.045, 0.16, 8]} />
+          <meshStandardMaterial color="#4b3b2d" roughness={0.72} />
+        </mesh>
+      )))}
+      <mesh position={[0, 0.22, bodyZ]} castShadow receiveShadow>
+        <boxGeometry args={[item.width, 0.28, Math.max(0.42, bodyDepth - 0.14)]} />
+        <meshStandardMaterial color={item.accentColor} roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 0.42, bodyZ - bodyDepth * 0.08]} castShadow receiveShadow>
+        <boxGeometry args={[cushionWidth, 0.16, Math.max(0.34, bodyDepth * 0.62)]} />
+        <meshStandardMaterial color={item.color} roughness={0.96} />
+      </mesh>
+      <mesh position={[0, 0.3 + (item.height - 0.3) / 2, bodyZ + bodyDepth / 2 - 0.1]} castShadow receiveShadow>
+        <boxGeometry args={[item.width, item.height - 0.3, 0.2]} />
+        <meshStandardMaterial color={item.color} roughness={0.96} />
+      </mesh>
+      {[-1, 1].map((side) => (
+        <mesh key={side} position={[side * (item.width / 2 - armWidth / 2), 0.45, bodyZ - 0.02]} castShadow receiveShadow>
+          <boxGeometry args={[armWidth, 0.54, Math.max(0.42, bodyDepth - 0.12)]} />
+          <meshStandardMaterial color={item.color} roughness={0.96} />
+        </mesh>
+      ))}
+      {item.shape === "chaise" && (
+        <group position={[-item.width * 0.31, 0, 0]}>
+          <mesh position={[0, 0.22, 0]} castShadow receiveShadow>
+            <boxGeometry args={[item.width * 0.34, 0.28, item.depth - 0.16]} />
+            <meshStandardMaterial color={item.accentColor} roughness={0.9} />
+          </mesh>
+          <mesh position={[0, 0.42, -0.03]} castShadow receiveShadow>
+            <boxGeometry args={[item.width * 0.31, 0.16, item.depth - 0.22]} />
+            <meshStandardMaterial color={item.color} roughness={0.96} />
+          </mesh>
+        </group>
+      )}
+      </>}
       </group>
+    </group>
+  );
+}
+
+function BedFurniture({ item }: { item: FurnitureCatalogItem }) {
+  const frameHeight = Math.min(0.32, item.height * 0.46);
+  const headboardHeight = item.height;
+  const mattressWidth = Math.max(0.3, item.width - 0.14);
+  const mattressDepth = Math.max(0.5, item.depth - 0.16);
+  return (
+    <group>
+      <mesh position={[0, frameHeight / 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[item.width, frameHeight, item.depth]} />
+        <meshStandardMaterial color={item.accentColor} roughness={0.76} />
+      </mesh>
+      <mesh position={[0, frameHeight + 0.09, -0.02]} castShadow receiveShadow>
+        <boxGeometry args={[mattressWidth, 0.18, mattressDepth]} />
+        <meshStandardMaterial color="#f0eee6" roughness={0.98} />
+      </mesh>
+      <mesh position={[0, headboardHeight / 2, item.depth / 2 - 0.045]} castShadow receiveShadow>
+        <boxGeometry args={[item.width, headboardHeight, 0.09]} />
+        <meshStandardMaterial color={item.color} roughness={0.82} />
+      </mesh>
+      <mesh position={[0, frameHeight + 0.22, item.depth * 0.27]} castShadow>
+        <boxGeometry args={[mattressWidth * 0.72, 0.14, Math.min(0.38, item.depth * 0.2)]} />
+        <meshStandardMaterial color="#d9d4c9" roughness={1} />
+      </mesh>
+    </group>
+  );
+}
+
+function TableFurniture({ item }: { item: FurnitureCatalogItem }) {
+  const topThickness = Math.min(0.1, item.height * 0.14);
+  const legWidth = Math.min(0.09, item.width * 0.12, item.depth * 0.12);
+  const legHeight = item.height - topThickness;
+  const xInset = Math.max(legWidth, item.width / 2 - legWidth * 1.25);
+  const zInset = Math.max(legWidth, item.depth / 2 - legWidth * 1.25);
+  return (
+    <group>
+      <mesh position={[0, item.height - topThickness / 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[item.width, topThickness, item.depth]} />
+        <meshStandardMaterial color={item.color} roughness={0.72} />
+      </mesh>
+      {[-1, 1].flatMap((side) => [-1, 1].map((front) => (
+        <mesh key={`${side}-${front}`} position={[side * xInset, legHeight / 2, front * zInset]} castShadow>
+          <boxGeometry args={[legWidth, legHeight, legWidth]} />
+          <meshStandardMaterial color={item.accentColor} roughness={0.8} />
+        </mesh>
+      )))}
+    </group>
+  );
+}
+
+function ChairFurniture({ item }: { item: FurnitureCatalogItem }) {
+  const seatHeight = Math.min(0.45, item.height * 0.58);
+  const seatThickness = 0.08;
+  const legWidth = Math.min(0.045, item.width * 0.1);
+  const xInset = item.width / 2 - legWidth * 1.4;
+  const zInset = item.depth / 2 - legWidth * 1.4;
+  return (
+    <group>
+      {[-1, 1].flatMap((side) => [-1, 1].map((front) => (
+        <mesh key={`${side}-${front}`} position={[side * xInset, seatHeight / 2, front * zInset]} castShadow>
+          <boxGeometry args={[legWidth, seatHeight, legWidth]} />
+          <meshStandardMaterial color={item.accentColor} roughness={0.76} />
+        </mesh>
+      )))}
+      <mesh position={[0, seatHeight, -0.015]} castShadow receiveShadow>
+        <boxGeometry args={[item.width, seatThickness, Math.max(0.25, item.depth * 0.72)]} />
+        <meshStandardMaterial color={item.color} roughness={0.86} />
+      </mesh>
+      <mesh position={[0, seatHeight + (item.height - seatHeight) / 2, item.depth / 2 - 0.045]} castShadow receiveShadow>
+        <boxGeometry args={[item.width, item.height - seatHeight, 0.09]} />
+        <meshStandardMaterial color={item.color} roughness={0.86} />
+      </mesh>
     </group>
   );
 }
@@ -663,18 +778,6 @@ function FurnitureModel({ fixture, elevation }: { fixture: Fixture; elevation: n
         <mesh castShadow receiveShadow>
           <boxGeometry args={[width, 0.8, depth]} />
           <meshStandardMaterial color="#c4b89a" roughness={0.65} />
-        </mesh>
-      </group>
-    );
-    case "countertop": return (
-      <group position={[x, y + 0.44, z]} rotation={[0, rotation, 0]}>
-        <mesh castShadow receiveShadow>
-          <boxGeometry args={[width, 0.9, depth]} />
-          <meshStandardMaterial color="#bab0a0" roughness={0.6} />
-        </mesh>
-        <mesh position={[0, 0.46, 0]} castShadow>
-          <boxGeometry args={[width + 0.01, 0.03, depth + 0.01]} />
-          <meshStandardMaterial color="#d0c8b8" roughness={0.4} metalness={0.1} />
         </mesh>
       </group>
     );

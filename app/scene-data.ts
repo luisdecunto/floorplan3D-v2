@@ -63,8 +63,7 @@ export type FixtureKind =
   | "toilet"
   | "shower"
   | "bathtub"
-  | "washer"
-  | "countertop";
+  | "washer";
 
 export type Fixture = {
   id: string;

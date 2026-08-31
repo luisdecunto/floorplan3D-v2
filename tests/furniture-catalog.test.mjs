@@ -3,11 +3,9 @@ import test from "node:test";
 import {
   FURNITURE_CATALOG,
   clampFurniturePosition,
-  furnitureCollisionSize,
   furnitureFootprint,
 } from "../app/furniture-catalog.ts";
 import {
-  furnitureIntersectsFurniture,
   furnitureIntersectsWalls,
   resolveFurnitureMove,
   snapFurniturePosition,
@@ -36,15 +34,6 @@ test("IKEA starter set includes verified furniture categories and FRIHETEN dimen
     new Set(FURNITURE_CATALOG.filter(({ articleNumber }) => articleNumber).map(({ category }) => category)),
     new Set(["Sofas", "Beds", "Tables", "Chairs"]),
   );
-});
-
-test("every starter furniture item declares materials and asset license provenance", () => {
-  for (const item of FURNITURE_CATALOG) {
-    assert.ok(Array.isArray(item.materials) && item.materials.length > 0, `${item.id} should list materials`);
-    assert.ok(item.license && typeof item.license.type === "string", `${item.id} should declare a license`);
-    // No starter item ships a redistributed manufacturer mesh.
-    if (!item.glbUrl) assert.equal(item.license.type, "procedural-only");
-  }
 });
 
 test("rotated furniture swaps its axis-aligned metric footprint", () => {
@@ -79,10 +68,8 @@ const testChair = {
   depth: 0.8,
   height: 0.8,
   upholstery: "Test",
-  materials: ["Test"],
   color: "#000",
   accentColor: "#111",
-  license: { type: "procedural-only" },
 };
 
 test("optional grid snapping is aligned to the floor slab origin", () => {
@@ -132,25 +119,4 @@ test("furniture, fixtures, and stairs are final-placement obstacles", () => {
   assert.equal(resolveFurnitureMove(testChair, occupiedLevel, 0, { x: -2, z: 0 }, { x: -1, z: 0 }, 0, [obstacle]).collision, "furniture");
   assert.equal(resolveFurnitureMove(testChair, occupiedLevel, 0, { x: -2, z: 0 }, { x: 1, z: -1 }).collision, "fixture");
   assert.equal(resolveFurnitureMove(testChair, occupiedLevel, 0, { x: -2, z: 0 }, { x: 1, z: 1 }).collision, "stair");
-});
-
-test("a footprint override drives collision instead of the visual width/depth", () => {
-  // Visually a 0.8m armchair, but its collision footprint is overridden down to 0.3m -
-  // e.g. a GLB asset whose real occupied floor space is smaller than its bounding box.
-  const compactFootprintChair = { ...testChair, footprint: { width: 0.3, depth: 0.3 } };
-  assert.deepEqual(furnitureCollisionSize(compactFootprintChair), { width: 0.3, depth: 0.3 });
-
-  const obstacle = { id: "placed", item: testChair, position: { x: 0, z: 0 }, rotation: 0 };
-  // 0.7m away: still overlaps the full-size chair's footprint (combined half-width 0.87m),
-  // but clears the overridden compact one (combined half-width only 0.62m).
-  assert.equal(furnitureIntersectsFurniture(testChair, 0, { x: 0.7, z: 0 }, [obstacle]), true);
-  assert.equal(furnitureIntersectsFurniture(compactFootprintChair, 0, { x: 0.7, z: 0 }, [obstacle]), false);
-});
-
-test("furnitureFootprint respects a footprint override when clamping to the slab", () => {
-  const wideVisualNarrowFootprint = { ...testChair, width: 4, depth: 4, footprint: { width: 0.5, depth: 0.5 } };
-  const slab = { x: 0, z: 0, width: 5, depth: 4 };
-  // Without the override this would need to clamp hard for a 4m-wide item; with it, it barely clamps.
-  const position = clampFurniturePosition(wideVisualNarrowFootprint, slab, 0, 100, -100);
-  assert.ok(position.x > slab.width / 2 - 1);
 });
