@@ -9,7 +9,7 @@
 
 export type DetectedFixture = {
   id: string;
-  kind: "fridge" | "stove" | "sink" | "island" | "cupboard" | "toilet" | "shower" | "bathtub" | "washer";
+  kind: "fridge" | "stove" | "sink" | "island" | "cupboard" | "toilet" | "shower" | "bathtub" | "washer" | "countertop";
   x: number;
   y: number;
   width: number;
@@ -378,6 +378,14 @@ function deduplicateFixtures(fixtures: DetectedFixture[]): DetectedFixture[] {
  */
 export type FixtureObstacle = { minX: number; minY: number; maxX: number; maxY: number };
 
+/** Pixel-space wall segment for wall-adjacency checks. */
+export type DetectorWall = {
+  axis: "horizontal" | "vertical";
+  start: [number, number];
+  end: [number, number];
+  thickness: number;
+};
+
 /** True when a fixture's box overlaps any obstacle by more than `maxOverlap` of its own area. */
 function overlapsObstacle(f: DetectedFixture, obstacles: FixtureObstacle[], maxOverlap = 0.2): boolean {
   const fMinX = f.x - f.width / 2;
@@ -394,10 +402,172 @@ function overlapsObstacle(f: DetectedFixture, obstacles: FixtureObstacle[], maxO
 }
 
 /**
+ * True when a fixture's bounding box is within `margin` px of any wall span.
+ * Real fixtures sit flush against a wall; dimension text and window mullions
+ * float in open space, so this is the primary false-positive filter.
+ */
+function adjacentToWall(
+  fx: number, fy: number, fw: number, fh: number,
+  walls: DetectorWall[], margin: number,
+): boolean {
+  const fMinX = fx - fw / 2;
+  const fMinY = fy - fh / 2;
+  const fMaxX = fx + fw / 2;
+  const fMaxY = fy + fh / 2;
+  for (const wall of walls) {
+    const wMinX = Math.min(wall.start[0], wall.end[0]) - wall.thickness / 2;
+    const wMaxX = Math.max(wall.start[0], wall.end[0]) + wall.thickness / 2;
+    const wMinY = Math.min(wall.start[1], wall.end[1]) - wall.thickness / 2;
+    const wMaxY = Math.max(wall.start[1], wall.end[1]) + wall.thickness / 2;
+    if (wall.axis === "horizontal") {
+      if (fMaxX < wMinX || fMinX > wMaxX) continue;
+      if (Math.abs(fy - (wMinY + wMaxY) / 2) < fh / 2 + margin) return true;
+    } else {
+      if (fMaxY < wMinY || fMinY > wMaxY) continue;
+      if (Math.abs(fx - (wMinX + wMaxX) / 2) < fw / 2 + margin) return true;
+    }
+  }
+  return false;
+}
+
+/** Return a rotation that faces toward the nearest wall. */
+function nearestWallRotation(fx: number, fy: number, walls: DetectorWall[]): number {
+  let best = 0;
+  let bestDist = Infinity;
+  for (const wall of walls) {
+    const mid = [(wall.start[0] + wall.end[0]) / 2, (wall.start[1] + wall.end[1]) / 2];
+    const d = Math.hypot(fx - mid[0], fy - mid[1]);
+    if (d < bestDist) {
+      bestDist = d;
+      if (wall.axis === "horizontal") {
+        best = fy < mid[1] ? 0 : Math.PI;
+      } else {
+        best = fx < mid[0] ? Math.PI / 2 : -Math.PI / 2;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Built-in cupboard / wardrobe: an elongated bordered rectangle (aspect 2–7)
+ * with partial interior ink (shelf dividers), sitting flush against a wall.
+ */
+export function detectCupboards(
+  mask: Uint8Array,
+  imgW: number,
+  footprint: Bounds,
+  wallThickness: number,
+): DetectedFixture[] {
+  const minShort = wallThickness * 0.8;
+  const maxShort = wallThickness * 2.2;
+  const minLong = wallThickness * 2.5;
+  const maxLong = wallThickness * 9;
+  const step = Math.max(2, Math.round(wallThickness * 0.45));
+  const results: DetectedFixture[] = [];
+
+  for (let y0 = Math.round(footprint.minY); y0 < Math.round(footprint.maxY) - Math.round(minShort); y0 += step) {
+    for (let x0 = Math.round(footprint.minX); x0 < Math.round(footprint.maxX) - Math.round(minShort); x0 += step) {
+      for (let w = Math.round(minShort); w <= Math.round(maxLong); w += step) {
+        for (let h = Math.round(minShort); h <= Math.round(maxLong); h += step) {
+          const x1 = x0 + w; const y1 = y0 + h;
+          if (x1 > footprint.maxX || y1 > footprint.maxY) continue;
+          const aspect = Math.max(w, h) / Math.max(1, Math.min(w, h));
+          if (aspect < 1.8 || aspect > 7) continue;
+          const shortSide = Math.min(w, h);
+          if (shortSide < minShort || shortSide > maxShort) continue;
+          const longSide = Math.max(w, h);
+          if (longSide < minLong || longSide > maxLong) continue;
+          const m = 2;
+          const borderD = (
+            density(mask, imgW, x0, y0, x1, y0 + m) +
+            density(mask, imgW, x0, y1 - m, x1, y1) +
+            density(mask, imgW, x0, y0, x0 + m, y1) +
+            density(mask, imgW, x1 - m, y0, x1, y1)
+          ) / 4;
+          if (borderD < 0.20) continue;
+          const innerD = density(mask, imgW, x0 + m, y0 + m, x1 - m, y1 - m);
+          if (innerD > 0.30 || innerD < 0.01) continue;
+          results.push({
+            id: `cupboard-${results.length + 1}`,
+            kind: "cupboard",
+            x: (x0 + x1) / 2, y: (y0 + y1) / 2,
+            width: w, height: h,
+            rotation: 0,
+            confidence: clamp(0.52 + borderD * 0.2 + (aspect > 2.5 ? 0.08 : 0), 0.52, 0.78),
+          });
+        }
+      }
+    }
+  }
+  return deduplicateFixtures(results);
+}
+
+/**
+ * Kitchen countertop: a long narrow rectangle (aspect 3+) with medium interior
+ * density (hatching/fill), sitting against a wall.
+ */
+export function detectCountertops(
+  mask: Uint8Array,
+  imgW: number,
+  footprint: Bounds,
+  wallThickness: number,
+): DetectedFixture[] {
+  const minShort = wallThickness * 0.9;
+  const maxShort = wallThickness * 2.5;
+  const minLong = wallThickness * 3;
+  const maxLong = wallThickness * 12;
+  const step = Math.max(2, Math.round(wallThickness * 0.5));
+  const results: DetectedFixture[] = [];
+
+  for (let y0 = Math.round(footprint.minY); y0 < Math.round(footprint.maxY) - Math.round(minShort); y0 += step) {
+    for (let x0 = Math.round(footprint.minX); x0 < Math.round(footprint.maxX) - Math.round(minShort); x0 += step) {
+      for (let w = Math.round(minShort); w <= Math.round(maxLong); w += step) {
+        for (let h = Math.round(minShort); h <= Math.round(maxLong); h += step) {
+          const x1 = x0 + w; const y1 = y0 + h;
+          if (x1 > footprint.maxX || y1 > footprint.maxY) continue;
+          const aspect = Math.max(w, h) / Math.max(1, Math.min(w, h));
+          if (aspect < 2.5) continue;
+          const shortSide = Math.min(w, h);
+          if (shortSide < minShort || shortSide > maxShort) continue;
+          const longSide = Math.max(w, h);
+          if (longSide < minLong || longSide > maxLong) continue;
+          const m = 2;
+          const borderD = (
+            density(mask, imgW, x0, y0, x1, y0 + m) +
+            density(mask, imgW, x0, y1 - m, x1, y1) +
+            density(mask, imgW, x0, y0, x0 + m, y1) +
+            density(mask, imgW, x1 - m, y0, x1, y1)
+          ) / 4;
+          if (borderD < 0.18) continue;
+          const innerD = density(mask, imgW, x0 + m, y0 + m, x1 - m, y1 - m);
+          if (innerD < 0.08 || innerD > 0.55) continue;
+          results.push({
+            id: `countertop-${results.length + 1}`,
+            kind: "countertop" as DetectedFixture["kind"],
+            x: (x0 + x1) / 2, y: (y0 + y1) / 2,
+            width: w, height: h,
+            rotation: 0,
+            confidence: clamp(0.50 + innerD * 0.3 + (aspect > 4 ? 0.06 : 0), 0.50, 0.74),
+          });
+        }
+      }
+    }
+  }
+  return deduplicateFixtures(results);
+}
+
+/**
  * Top-level entry point. Runs all detectors, removes any hit that overlaps an
  * obstacle (stair shaft or wall corridor), deduplicates across types, and
  * returns at most `maxFixtures` results. When evidence is ambiguous nothing is
  * emitted — a missed fixture is preferable to a wrong one.
+ *
+ * When `walls` are provided, bordered-box detectors (fridges, sinks, toilets,
+ * showers, cupboards, countertops) are enabled with wall-adjacency filtering
+ * to suppress the false positives from dimension text, room labels, and window
+ * mullions that previously forced them off. Without walls, only detectStoves
+ * runs (the only detector with zero false positives on its own).
  */
 export function detectFurniture(
   mask: Uint8Array,
@@ -406,22 +576,30 @@ export function detectFurniture(
   wallThickness: number,
   obstacles: FixtureObstacle[] = [],
   maxFixtures = 24,
+  walls: DetectorWall[] = [],
 ): DetectedFixture[] {
-  // Measured on the seven-fixture corpus (tests/benchmark/fixture-diag.mjs):
-  // the bordered-box detectors — detectFridges, detectSinks, detectToilets,
-  // detectShowersAndBathtubs — fire 20–48 times PER PLAN, saturating the cap
-  // on dimension text, room-label boxes and window mullions. They do not
-  // separate real fixtures from drawing furniture and text, so per the Stage 5
-  // gate ("a detector that fires on furniture outlines/text stays off") they
-  // are disabled here. detectStoves is the only one that scores zero false
-  // positives across all seven fixtures, so it alone runs; when it finds
-  // nothing the fixture list is empty — the intended fallback. The other
-  // detectors remain exported for a future tuning pass keyed to room type.
   const all: DetectedFixture[] = [
     ...detectStoves(mask, imgW, footprint, wallThickness),
   ];
+
+  if (walls.length > 0) {
+    const margin = wallThickness * 1.8;
+    const wallFilter = (f: DetectedFixture) =>
+      adjacentToWall(f.x, f.y, f.width, f.height, walls, margin);
+    const orient = (f: DetectedFixture) =>
+      f.rotation === 0 ? { ...f, rotation: nearestWallRotation(f.x, f.y, walls) } : f;
+
+    all.push(
+      ...detectFridges(mask, imgW, footprint, wallThickness).filter(wallFilter).map(orient),
+      ...detectSinks(mask, imgW, footprint, wallThickness).filter(wallFilter).map(orient),
+      ...detectToilets(mask, imgW, footprint, wallThickness).filter(wallFilter).map(orient),
+      ...detectShowersAndBathtubs(mask, imgW, footprint, wallThickness).filter(wallFilter).map(orient),
+      ...detectCupboards(mask, imgW, footprint, wallThickness).filter(wallFilter).map(orient),
+      ...detectCountertops(mask, imgW, footprint, wallThickness).filter(wallFilter).map(orient),
+    );
+  }
+
   const cleared = obstacles.length ? all.filter((f) => !overlapsObstacle(f, obstacles)) : all;
-  // Re-number ids uniquely after merging all kinds
   const renumbered = cleared.map((f, i) => ({ ...f, id: `fixture-${i + 1}` }));
   return deduplicateFixtures(renumbered).slice(0, maxFixtures);
 }
