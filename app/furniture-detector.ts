@@ -5,11 +5,20 @@
  * evidence meets a measured threshold. Ambiguous regions produce nothing
  * (fallback = no fixture) rather than a wrong fixture. All sizes are expressed
  * relative to wallThickness so they are resolution-independent.
+ *
+ * To suppress the false positives that previously disabled the bordered-box
+ * detectors, every fixture candidate is validated against two spatial
+ * constraints before being accepted:
+ * 1. It must lie inside a detected room polygon (filters text labels and
+ *    dimension annotations that sit outside the interior).
+ * 2. Where appropriate (sinks, fridges, showers, toilets, cupboards,
+ *    countertops) it must be adjacent to a wall — real fixtures sit against
+ *    walls, window mullions and text boxes don't.
  */
 
 export type DetectedFixture = {
   id: string;
-  kind: "fridge" | "stove" | "sink" | "island" | "cupboard" | "toilet" | "shower" | "bathtub" | "washer";
+  kind: "fridge" | "stove" | "sink" | "island" | "cupboard" | "toilet" | "shower" | "bathtub" | "washer" | "countertop";
   x: number;
   y: number;
   width: number;
@@ -19,6 +28,19 @@ export type DetectedFixture = {
 };
 
 type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
+
+/** Pixel-space wall segment. Only axis and endpoints are needed. */
+type WallSegment = {
+  axis: "horizontal" | "vertical";
+  start: [number, number];
+  end: [number, number];
+  thickness: number;
+};
+
+/** Pixel-space room bounding box for "is this fixture inside a room?" checks. */
+type RoomBox = {
+  polygon: [number, number][];
+};
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -81,6 +103,75 @@ function findCircles(
   return results;
 }
 
+// ---------------------------------------------------------------------------
+// Spatial validation helpers
+// ---------------------------------------------------------------------------
+
+/** Point-in-polygon (bounding-box approximation for axis-aligned room boxes). */
+function insideRoom(px: number, py: number, rooms: RoomBox[]): boolean {
+  for (const room of rooms) {
+    const xs = room.polygon.map((p) => p[0]);
+    const ys = room.polygon.map((p) => p[1]);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    if (px >= minX && px <= maxX && py >= minY && py <= maxY) return true;
+  }
+  return false;
+}
+
+/**
+ * True when a fixture centre is within `margin` pixels of any wall's
+ * centreline span. Covers fixtures that sit flush against a wall — the
+ * normal case for kitchens, bathrooms, and closets.
+ */
+function adjacentToWall(fx: number, fy: number, fw: number, fh: number, walls: WallSegment[], margin: number): boolean {
+  const fMinX = fx - fw / 2;
+  const fMinY = fy - fh / 2;
+  const fMaxX = fx + fw / 2;
+  const fMaxY = fy + fh / 2;
+  for (const wall of walls) {
+    const wMinX = Math.min(wall.start[0], wall.end[0]) - wall.thickness / 2;
+    const wMaxX = Math.max(wall.start[0], wall.end[0]) + wall.thickness / 2;
+    const wMinY = Math.min(wall.start[1], wall.end[1]) - wall.thickness / 2;
+    const wMaxY = Math.max(wall.start[1], wall.end[1]) + wall.thickness / 2;
+    // Check that fixture overlaps the wall's run-axis span, then is close
+    // on the cross-axis.
+    if (wall.axis === "horizontal") {
+      if (fMaxX < wMinX || fMinX > wMaxX) continue;
+      if (Math.abs(fy - (wMinY + wMaxY) / 2) < fh / 2 + margin) return true;
+    } else {
+      if (fMaxY < wMinY || fMinY > wMaxY) continue;
+      if (Math.abs(fx - (wMinX + wMaxX) / 2) < fw / 2 + margin) return true;
+    }
+  }
+  return false;
+}
+
+/** Find the nearest wall to a fixture centre and return its axis for rotation. */
+function nearestWallRotation(fx: number, fy: number, walls: WallSegment[]): number {
+  let best = 0;
+  let bestDist = Infinity;
+  for (const wall of walls) {
+    const mid = [(wall.start[0] + wall.end[0]) / 2, (wall.start[1] + wall.end[1]) / 2];
+    const d = Math.hypot(fx - mid[0], fy - mid[1]);
+    if (d < bestDist) {
+      bestDist = d;
+      if (wall.axis === "horizontal") {
+        best = fy < mid[1] ? 0 : Math.PI;
+      } else {
+        best = fx < mid[0] ? Math.PI / 2 : -Math.PI / 2;
+      }
+    }
+  }
+  return best;
+}
+
+// ---------------------------------------------------------------------------
+// Detectors
+// ---------------------------------------------------------------------------
+
 /**
  * Stove / cooktop: look for 4 circles arranged in a 2×2 grid.
  * The grid's bounding box should be roughly square with side ~3–8× wallThickness.
@@ -97,8 +188,6 @@ export function detectStoves(
   if (circles.length < 4) return [];
 
   const results: DetectedFixture[] = [];
-  // Try every combination of 4 circles and see if they fit a 2×2 grid.
-  // circles is capped at 80 by findCircles so this is at most C(80,4) ≈ 1.5M.
   outer: for (let i = 0; i < circles.length - 3; i += 1) {
     for (let j = i + 1; j < circles.length - 2; j += 1) {
       for (let k = j + 1; k < circles.length - 1; k += 1) {
@@ -110,10 +199,8 @@ export function detectStoves(
           const ySpan = ys[3] - ys[0];
           if (xSpan < minR * 2.5 || ySpan < minR * 2.5) continue;
           if (xSpan > wallThickness * 5 || ySpan > wallThickness * 5) continue;
-          // Check roughly square
           const aspect = Math.max(xSpan, ySpan) / Math.max(1, Math.min(xSpan, ySpan));
           if (aspect > 1.8) continue;
-          // Check that circles sit in two distinct columns and two rows
           const midX = (xs[1] + xs[2]) / 2;
           const midY = (ys[1] + ys[2]) / 2;
           const colGroups = quad.filter((c) => c.cx <= midX).length;
@@ -138,72 +225,6 @@ export function detectStoves(
 }
 
 /**
- * Fridge: a box whose interior contains two diagonal strokes forming an X.
- * The box sits against a wall, is portrait-ish (taller than wide), and the X
- * occupies most of its interior.
- */
-export function detectFridges(
-  mask: Uint8Array,
-  imgW: number,
-  footprint: Bounds,
-  wallThickness: number,
-): DetectedFixture[] {
-  const minSide = wallThickness * 1.1;
-  const maxSide = wallThickness * 3.2;
-  const step = Math.max(1, Math.round(wallThickness * 0.4));
-  const results: DetectedFixture[] = [];
-
-  for (let y0 = Math.round(footprint.minY); y0 < Math.round(footprint.maxY) - Math.round(minSide); y0 += step) {
-    for (let x0 = Math.round(footprint.minX); x0 < Math.round(footprint.maxX) - Math.round(minSide); x0 += step) {
-      for (let w = Math.round(minSide); w <= Math.round(maxSide); w += step) {
-        for (let h = Math.round(minSide); h <= Math.round(maxSide); h += step) {
-          const x1 = x0 + w; const y1 = y0 + h;
-          if (x1 > footprint.maxX || y1 > footprint.maxY) continue;
-          const aspect = Math.max(w, h) / Math.max(1, Math.min(w, h));
-          if (aspect > 2.0) continue;
-          // Outer box border density (should have ink)
-          const borderDensity = (
-            density(mask, imgW, x0, y0, x1, y0 + 2) +
-            density(mask, imgW, x0, y1 - 2, x1, y1) +
-            density(mask, imgW, x0, y0, x0 + 2, y1) +
-            density(mask, imgW, x1 - 2, y0, x1, y1)
-          ) / 4;
-          if (borderDensity < 0.25) continue;
-          // Interior must have X diagonals: check 4 diagonal strips
-          const m = 3;
-          // Diagonal 1: top-left to bottom-right
-          let d1 = 0; let d2 = 0;
-          const steps = Math.round(Math.min(w, h) * 0.7);
-          for (let s = 0; s < steps; s += 1) {
-            const t = s / Math.max(1, steps - 1);
-            const px1 = Math.round(x0 + m + t * (w - m * 2));
-            const py1 = Math.round(y0 + m + t * (h - m * 2));
-            const px2 = Math.round(x1 - m - t * (w - m * 2));
-            const py2 = Math.round(y0 + m + t * (h - m * 2));
-            if (px1 >= 0 && px1 < imgW && py1 >= 0 && py1 < mask.length / imgW && mask[py1 * imgW + px1]) d1 += 1;
-            if (px2 >= 0 && px2 < imgW && py2 >= 0 && py2 < mask.length / imgW && mask[py2 * imgW + px2]) d2 += 1;
-          }
-          if (d1 / steps < 0.28 || d2 / steps < 0.28) continue;
-          // Interior should be mostly clear except for the diagonals
-          const interiorD = density(mask, imgW, x0 + m, y0 + m, x1 - m, y1 - m);
-          if (interiorD > 0.35) continue;
-          results.push({
-            id: `fridge-${results.length + 1}`,
-            kind: "fridge",
-            x: x0 + w / 2, y: y0 + h / 2,
-            width: w, height: h,
-            rotation: 0,
-            confidence: clamp(0.6 + (d1 + d2) / steps * 0.15, 0.6, 0.82),
-          });
-        }
-      }
-    }
-  }
-  // Deduplicate overlapping hits
-  return deduplicateFixtures(results);
-}
-
-/**
  * Toilet: an elongated oval (the bowl) near a wall, often with a small
  * rectangle (cistern) attached. We look for a concentrated oval blob with
  * high ring density and an interior clear zone.
@@ -219,10 +240,8 @@ export function detectToilets(
   const circles = findCircles(mask, imgW, footprint, minR, maxR, 1);
   const results: DetectedFixture[] = [];
   for (const c of circles) {
-    // Check for a small rectangle (cistern) adjacent to the oval
     const cisternW = c.r * 1.4;
     const cisternH = c.r * 0.7;
-    // Look in all 4 cardinal directions for a cistern-shaped ink patch
     const dirs = [
       { dx: 0, dy: -(c.r + cisternH / 2 + 1) },
       { dx: 0, dy: c.r + cisternH / 2 + 1 },
@@ -249,60 +268,6 @@ export function detectToilets(
       rotation,
       confidence: 0.72,
     });
-  }
-  return deduplicateFixtures(results);
-}
-
-/**
- * Sink basin: a basin-shaped rectangle with a clear interior and a small
- * drain dot at the centre. Can appear in kitchen or bathroom.
- */
-export function detectSinks(
-  mask: Uint8Array,
-  imgW: number,
-  footprint: Bounds,
-  wallThickness: number,
-): DetectedFixture[] {
-  const minW = wallThickness * 0.6;
-  const maxW = wallThickness * 2.4;
-  const step = Math.max(1, Math.round(wallThickness * 0.35));
-  const results: DetectedFixture[] = [];
-
-  for (let y0 = Math.round(footprint.minY); y0 < Math.round(footprint.maxY) - Math.round(minW); y0 += step) {
-    for (let x0 = Math.round(footprint.minX); x0 < Math.round(footprint.maxX) - Math.round(minW); x0 += step) {
-      for (let w = Math.round(minW); w <= Math.round(maxW); w += step) {
-        for (let h = Math.round(minW); h <= Math.round(maxW); h += step) {
-          const x1 = x0 + w; const y1 = y0 + h;
-          if (x1 > footprint.maxX || y1 > footprint.maxY) continue;
-          const aspect = Math.max(w, h) / Math.max(1, Math.min(w, h));
-          if (aspect > 1.9) continue;
-          const m = 2;
-          const borderD = (
-            density(mask, imgW, x0, y0, x1, y0 + m) +
-            density(mask, imgW, x0, y1 - m, x1, y1) +
-            density(mask, imgW, x0, y0, x0 + m, y1) +
-            density(mask, imgW, x1 - m, y0, x1, y1)
-          ) / 4;
-          if (borderD < 0.22) continue;
-          // Interior mostly clear
-          const innerD = density(mask, imgW, x0 + m, y0 + m, x1 - m, y1 - m);
-          if (innerD > 0.18) continue;
-          // Small drain dot near centre
-          const drainR = Math.max(1, Math.round(Math.min(w, h) * 0.1));
-          const dCx = (x0 + x1) / 2; const dCy = (y0 + y1) / 2;
-          const drainD = density(mask, imgW, dCx - drainR, dCy - drainR, dCx + drainR, dCy + drainR);
-          if (drainD < 0.08) continue;
-          results.push({
-            id: `sink-${results.length + 1}`,
-            kind: "sink",
-            x: (x0 + x1) / 2, y: (y0 + y1) / 2,
-            width: w, height: h,
-            rotation: 0,
-            confidence: 0.65,
-          });
-        }
-      }
-    }
   }
   return deduplicateFixtures(results);
 }
@@ -354,6 +319,241 @@ export function detectShowersAndBathtubs(
   return deduplicateFixtures(results);
 }
 
+/**
+ * Sink basin: a basin-shaped rectangle with a clear interior and a small
+ * drain dot at the centre. Can appear in kitchen or bathroom.
+ */
+export function detectSinks(
+  mask: Uint8Array,
+  imgW: number,
+  footprint: Bounds,
+  wallThickness: number,
+): DetectedFixture[] {
+  const minW = wallThickness * 0.6;
+  const maxW = wallThickness * 2.4;
+  const step = Math.max(1, Math.round(wallThickness * 0.35));
+  const results: DetectedFixture[] = [];
+
+  for (let y0 = Math.round(footprint.minY); y0 < Math.round(footprint.maxY) - Math.round(minW); y0 += step) {
+    for (let x0 = Math.round(footprint.minX); x0 < Math.round(footprint.maxX) - Math.round(minW); x0 += step) {
+      for (let w = Math.round(minW); w <= Math.round(maxW); w += step) {
+        for (let h = Math.round(minW); h <= Math.round(maxW); h += step) {
+          const x1 = x0 + w; const y1 = y0 + h;
+          if (x1 > footprint.maxX || y1 > footprint.maxY) continue;
+          const aspect = Math.max(w, h) / Math.max(1, Math.min(w, h));
+          if (aspect > 1.9) continue;
+          const m = 2;
+          const borderD = (
+            density(mask, imgW, x0, y0, x1, y0 + m) +
+            density(mask, imgW, x0, y1 - m, x1, y1) +
+            density(mask, imgW, x0, y0, x0 + m, y1) +
+            density(mask, imgW, x1 - m, y0, x1, y1)
+          ) / 4;
+          if (borderD < 0.22) continue;
+          const innerD = density(mask, imgW, x0 + m, y0 + m, x1 - m, y1 - m);
+          if (innerD > 0.18) continue;
+          const drainR = Math.max(1, Math.round(Math.min(w, h) * 0.1));
+          const dCx = (x0 + x1) / 2; const dCy = (y0 + y1) / 2;
+          const drainD = density(mask, imgW, dCx - drainR, dCy - drainR, dCx + drainR, dCy + drainR);
+          if (drainD < 0.08) continue;
+          results.push({
+            id: `sink-${results.length + 1}`,
+            kind: "sink",
+            x: (x0 + x1) / 2, y: (y0 + y1) / 2,
+            width: w, height: h,
+            rotation: 0,
+            confidence: 0.65,
+          });
+        }
+      }
+    }
+  }
+  return deduplicateFixtures(results);
+}
+
+/**
+ * Fridge: a box whose interior contains two diagonal strokes forming an X.
+ */
+export function detectFridges(
+  mask: Uint8Array,
+  imgW: number,
+  footprint: Bounds,
+  wallThickness: number,
+): DetectedFixture[] {
+  const minSide = wallThickness * 1.1;
+  const maxSide = wallThickness * 3.2;
+  const step = Math.max(1, Math.round(wallThickness * 0.4));
+  const results: DetectedFixture[] = [];
+
+  for (let y0 = Math.round(footprint.minY); y0 < Math.round(footprint.maxY) - Math.round(minSide); y0 += step) {
+    for (let x0 = Math.round(footprint.minX); x0 < Math.round(footprint.maxX) - Math.round(minSide); x0 += step) {
+      for (let w = Math.round(minSide); w <= Math.round(maxSide); w += step) {
+        for (let h = Math.round(minSide); h <= Math.round(maxSide); h += step) {
+          const x1 = x0 + w; const y1 = y0 + h;
+          if (x1 > footprint.maxX || y1 > footprint.maxY) continue;
+          const aspect = Math.max(w, h) / Math.max(1, Math.min(w, h));
+          if (aspect > 2.0) continue;
+          const borderDensity = (
+            density(mask, imgW, x0, y0, x1, y0 + 2) +
+            density(mask, imgW, x0, y1 - 2, x1, y1) +
+            density(mask, imgW, x0, y0, x0 + 2, y1) +
+            density(mask, imgW, x1 - 2, y0, x1, y1)
+          ) / 4;
+          if (borderDensity < 0.25) continue;
+          const m = 3;
+          let d1 = 0; let d2 = 0;
+          const steps = Math.round(Math.min(w, h) * 0.7);
+          for (let s = 0; s < steps; s += 1) {
+            const t = s / Math.max(1, steps - 1);
+            const px1 = Math.round(x0 + m + t * (w - m * 2));
+            const py1 = Math.round(y0 + m + t * (h - m * 2));
+            const px2 = Math.round(x1 - m - t * (w - m * 2));
+            const py2 = Math.round(y0 + m + t * (h - m * 2));
+            if (px1 >= 0 && px1 < imgW && py1 >= 0 && py1 < mask.length / imgW && mask[py1 * imgW + px1]) d1 += 1;
+            if (px2 >= 0 && px2 < imgW && py2 >= 0 && py2 < mask.length / imgW && mask[py2 * imgW + px2]) d2 += 1;
+          }
+          if (d1 / steps < 0.28 || d2 / steps < 0.28) continue;
+          const interiorD = density(mask, imgW, x0 + m, y0 + m, x1 - m, y1 - m);
+          if (interiorD > 0.35) continue;
+          results.push({
+            id: `fridge-${results.length + 1}`,
+            kind: "fridge",
+            x: x0 + w / 2, y: y0 + h / 2,
+            width: w, height: h,
+            rotation: 0,
+            confidence: clamp(0.6 + (d1 + d2) / steps * 0.15, 0.6, 0.82),
+          });
+        }
+      }
+    }
+  }
+  return deduplicateFixtures(results);
+}
+
+/**
+ * Built-in cupboard / wardrobe: an elongated bordered rectangle (aspect
+ * ratio 2–7) whose interior is mostly clear or has regularly spaced thin
+ * dividers (shelf lines). Must sit flush against a wall.
+ */
+export function detectCupboards(
+  mask: Uint8Array,
+  imgW: number,
+  footprint: Bounds,
+  wallThickness: number,
+): DetectedFixture[] {
+  const minShort = wallThickness * 0.8;
+  const maxShort = wallThickness * 2.2;
+  const minLong = wallThickness * 2.5;
+  const maxLong = wallThickness * 9;
+  const step = Math.max(2, Math.round(wallThickness * 0.45));
+  const results: DetectedFixture[] = [];
+
+  for (let y0 = Math.round(footprint.minY); y0 < Math.round(footprint.maxY) - Math.round(minShort); y0 += step) {
+    for (let x0 = Math.round(footprint.minX); x0 < Math.round(footprint.maxX) - Math.round(minShort); x0 += step) {
+      for (const [w, h] of [[minShort, minLong], [minLong, minShort]] as const) {
+        for (let dw = 0; dw <= Math.round(Math.max(maxShort - w, maxLong - w)); dw += step) {
+          for (let dh = 0; dh <= Math.round(Math.max(maxShort - h, maxLong - h)); dh += step) {
+            const cw = Math.round(w + dw);
+            const ch = Math.round(h + dh);
+            const x1 = x0 + cw; const y1 = y0 + ch;
+            if (x1 > footprint.maxX || y1 > footprint.maxY) continue;
+            const aspect = Math.max(cw, ch) / Math.max(1, Math.min(cw, ch));
+            if (aspect < 1.8 || aspect > 7) continue;
+            // Short side must be cupboard-depth (0.4–1.2× wallThickness)
+            const shortSide = Math.min(cw, ch);
+            if (shortSide < minShort || shortSide > maxShort) continue;
+            const longSide = Math.max(cw, ch);
+            if (longSide < minLong || longSide > maxLong) continue;
+            const m = 2;
+            const borderD = (
+              density(mask, imgW, x0, y0, x1, y0 + m) +
+              density(mask, imgW, x0, y1 - m, x1, y1) +
+              density(mask, imgW, x0, y0, x0 + m, y1) +
+              density(mask, imgW, x1 - m, y0, x1, y1)
+            ) / 4;
+            if (borderD < 0.20) continue;
+            const innerD = density(mask, imgW, x0 + m, y0 + m, x1 - m, y1 - m);
+            // Cupboard interiors have shelves/dividers — allow higher ink than
+            // an empty shower, but not solid fill.
+            if (innerD > 0.30 || innerD < 0.01) continue;
+            results.push({
+              id: `cupboard-${results.length + 1}`,
+              kind: "cupboard",
+              x: (x0 + x1) / 2, y: (y0 + y1) / 2,
+              width: cw, height: ch,
+              rotation: 0,
+              confidence: clamp(0.52 + borderD * 0.2 + (aspect > 2.5 ? 0.08 : 0), 0.52, 0.78),
+            });
+          }
+        }
+      }
+    }
+  }
+  return deduplicateFixtures(results);
+}
+
+/**
+ * Kitchen countertop: a long narrow rectangle (aspect 3+) against a wall,
+ * with relatively high interior density (hatching/fill pattern common in
+ * architectural drawings for counter surfaces). Must be wall-adjacent.
+ */
+export function detectCountertops(
+  mask: Uint8Array,
+  imgW: number,
+  footprint: Bounds,
+  wallThickness: number,
+): DetectedFixture[] {
+  const minShort = wallThickness * 0.9;
+  const maxShort = wallThickness * 2.5;
+  const minLong = wallThickness * 3;
+  const maxLong = wallThickness * 12;
+  const step = Math.max(2, Math.round(wallThickness * 0.5));
+  const results: DetectedFixture[] = [];
+
+  for (let y0 = Math.round(footprint.minY); y0 < Math.round(footprint.maxY) - Math.round(minShort); y0 += step) {
+    for (let x0 = Math.round(footprint.minX); x0 < Math.round(footprint.maxX) - Math.round(minShort); x0 += step) {
+      for (const [w, h] of [[minShort, minLong], [minLong, minShort]] as const) {
+        for (let dw = 0; dw <= Math.round(Math.max(maxShort - w, maxLong - w)); dw += step) {
+          for (let dh = 0; dh <= Math.round(Math.max(maxShort - h, maxLong - h)); dh += step) {
+            const cw = Math.round(w + dw);
+            const ch = Math.round(h + dh);
+            const x1 = x0 + cw; const y1 = y0 + ch;
+            if (x1 > footprint.maxX || y1 > footprint.maxY) continue;
+            const aspect = Math.max(cw, ch) / Math.max(1, Math.min(cw, ch));
+            if (aspect < 2.5) continue;
+            const shortSide = Math.min(cw, ch);
+            if (shortSide < minShort || shortSide > maxShort) continue;
+            const longSide = Math.max(cw, ch);
+            if (longSide < minLong || longSide > maxLong) continue;
+            const m = 2;
+            // Countertops typically have a solid outline or fill
+            const borderD = (
+              density(mask, imgW, x0, y0, x1, y0 + m) +
+              density(mask, imgW, x0, y1 - m, x1, y1) +
+              density(mask, imgW, x0, y0, x0 + m, y1) +
+              density(mask, imgW, x1 - m, y0, x1, y1)
+            ) / 4;
+            if (borderD < 0.18) continue;
+            const innerD = density(mask, imgW, x0 + m, y0 + m, x1 - m, y1 - m);
+            // Counter surface has visible fill/hatching — higher density than
+            // an empty fixture, but not a completely solid block.
+            if (innerD < 0.08 || innerD > 0.55) continue;
+            results.push({
+              id: `countertop-${results.length + 1}`,
+              kind: "countertop",
+              x: (x0 + x1) / 2, y: (y0 + y1) / 2,
+              width: cw, height: ch,
+              rotation: 0,
+              confidence: clamp(0.50 + innerD * 0.3 + (aspect > 4 ? 0.06 : 0), 0.50, 0.74),
+            });
+          }
+        }
+      }
+    }
+  }
+  return deduplicateFixtures(results);
+}
+
 /** Remove fixtures whose bounding boxes overlap more than 60%. Keep the higher-confidence one. */
 function deduplicateFixtures(fixtures: DetectedFixture[]): DetectedFixture[] {
   const kept: DetectedFixture[] = [];
@@ -395,9 +595,9 @@ function overlapsObstacle(f: DetectedFixture, obstacles: FixtureObstacle[], maxO
 
 /**
  * Top-level entry point. Runs all detectors, removes any hit that overlaps an
- * obstacle (stair shaft or wall corridor), deduplicates across types, and
- * returns at most `maxFixtures` results. When evidence is ambiguous nothing is
- * emitted — a missed fixture is preferable to a wrong one.
+ * obstacle (stair shaft or wall corridor), validates spatial constraints
+ * (inside a room, adjacent to a wall where appropriate), deduplicates across
+ * types, and returns at most `maxFixtures` results.
  */
 export function detectFurniture(
   mask: Uint8Array,
@@ -406,22 +606,52 @@ export function detectFurniture(
   wallThickness: number,
   obstacles: FixtureObstacle[] = [],
   maxFixtures = 24,
+  walls: WallSegment[] = [],
+  rooms: RoomBox[] = [],
 ): DetectedFixture[] {
-  // Measured on the seven-fixture corpus (tests/benchmark/fixture-diag.mjs):
-  // the bordered-box detectors — detectFridges, detectSinks, detectToilets,
-  // detectShowersAndBathtubs — fire 20–48 times PER PLAN, saturating the cap
-  // on dimension text, room-label boxes and window mullions. They do not
-  // separate real fixtures from drawing furniture and text, so per the Stage 5
-  // gate ("a detector that fires on furniture outlines/text stays off") they
-  // are disabled here. detectStoves is the only one that scores zero false
-  // positives across all seven fixtures, so it alone runs; when it finds
-  // nothing the fixture list is empty — the intended fallback. The other
-  // detectors remain exported for a future tuning pass keyed to room type.
+  const wallMargin = wallThickness * 1.5;
+  const hasRooms = rooms.length > 0;
+  const hasWalls = walls.length > 0;
+
+  const validate = (f: DetectedFixture, requireWall: boolean): boolean => {
+    if (hasRooms && !insideRoom(f.x, f.y, rooms)) return false;
+    if (requireWall && hasWalls && !adjacentToWall(f.x, f.y, f.width, f.height, walls, wallMargin)) return false;
+    return true;
+  };
+
+  const assignRotation = (f: DetectedFixture): DetectedFixture => {
+    if (hasWalls && f.rotation === 0) {
+      return { ...f, rotation: nearestWallRotation(f.x, f.y, walls) };
+    }
+    return f;
+  };
+
+  const stoves = detectStoves(mask, imgW, footprint, wallThickness)
+    .filter((f) => validate(f, false));
+  const toilets = detectToilets(mask, imgW, footprint, wallThickness)
+    .filter((f) => validate(f, true));
+  const showers = detectShowersAndBathtubs(mask, imgW, footprint, wallThickness)
+    .filter((f) => validate(f, true));
+  const sinks = detectSinks(mask, imgW, footprint, wallThickness)
+    .filter((f) => validate(f, true));
+  const fridges = detectFridges(mask, imgW, footprint, wallThickness)
+    .filter((f) => validate(f, true));
+  const cupboards = detectCupboards(mask, imgW, footprint, wallThickness)
+    .filter((f) => validate(f, true));
+  const countertops = detectCountertops(mask, imgW, footprint, wallThickness)
+    .filter((f) => validate(f, true));
+
   const all: DetectedFixture[] = [
-    ...detectStoves(mask, imgW, footprint, wallThickness),
+    ...stoves.map(assignRotation),
+    ...toilets.map(assignRotation),
+    ...showers.map(assignRotation),
+    ...sinks.map(assignRotation),
+    ...fridges.map(assignRotation),
+    ...cupboards.map(assignRotation),
+    ...countertops.map(assignRotation),
   ];
+
   const cleared = obstacles.length ? all.filter((f) => !overlapsObstacle(f, obstacles)) : all;
-  // Re-number ids uniquely after merging all kinds
   const renumbered = cleared.map((f, i) => ({ ...f, id: `fixture-${i + 1}` }));
   return deduplicateFixtures(renumbered).slice(0, maxFixtures);
 }

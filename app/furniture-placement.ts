@@ -1,5 +1,5 @@
 import type { FurnitureCatalogItem } from "./furniture-catalog.ts";
-import { clampFurniturePosition } from "./furniture-catalog.ts";
+import { clampFurniturePosition, furnitureCollisionSize } from "./furniture-catalog.ts";
 import type { Level, Wall } from "./scene-data.ts";
 
 export type FurniturePosition = { x: number; z: number };
@@ -52,14 +52,15 @@ function furnitureRectangle(
   rotation: number,
   position: FurniturePosition,
 ): OrientedRectangle {
+  const size = furnitureCollisionSize(item);
   const cosine = Math.cos(rotation);
   const sine = Math.sin(rotation);
   return {
     center: position,
     axisX: { x: cosine, z: -sine },
     axisZ: { x: sine, z: cosine },
-    halfWidth: item.width / 2 + WALL_CLEARANCE,
-    halfDepth: item.depth / 2 + WALL_CLEARANCE,
+    halfWidth: size.width / 2 + WALL_CLEARANCE,
+    halfDepth: size.depth / 2 + WALL_CLEARANCE,
   };
 }
 
