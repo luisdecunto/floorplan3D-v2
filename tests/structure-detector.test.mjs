@@ -195,8 +195,8 @@ test("a right-hand flight expands left across connected return-flight evidence",
   }
   const stair = { id: "right-flight", runAxis: "vertical", x: 131, y: 48, width: 31, height: 74, stepCount: 10, confidence: 0.78 };
   const expanded = expandDetectedStairReturn(stair, mask, width, height, { x: 20, y: 18, width: 200, height: 154 }, 5);
-  assert.ok(expanded.x <= 115, "the shaft should expand toward the left-hand return flight");
-  assert.ok(expanded.width >= 47, "the shaft should cover both halves rather than shifting one flight");
+  assert.ok(expanded.x <= 106, "the shaft should include the left-hand return flight");
+  assert.ok(expanded.width >= 56, "the shaft should cover both halves rather than shifting one flight");
 });
 
 test("half-paced stairs use opposing flights, a half-height landing and an upper slab opening", () => {

@@ -781,18 +781,6 @@ function FurnitureModel({ fixture, elevation }: { fixture: Fixture; elevation: n
         </mesh>
       </group>
     );
-    case "countertop": return (
-      <group position={[x, y + 0.44, z]} rotation={[0, rotation, 0]}>
-        <mesh castShadow receiveShadow>
-          <boxGeometry args={[width, 0.9, depth]} />
-          <meshStandardMaterial color="#bab0a0" roughness={0.6} />
-        </mesh>
-        <mesh position={[0, 0.46, 0]} castShadow>
-          <boxGeometry args={[width + 0.01, 0.03, depth + 0.01]} />
-          <meshStandardMaterial color="#d0c8b8" roughness={0.4} metalness={0.1} />
-        </mesh>
-      </group>
-    );
     default: return null;
   }
 }
