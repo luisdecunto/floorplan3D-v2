@@ -13,7 +13,7 @@ const WALL_THICKNESS = 8;
  * they abut the walls, which is precisely the case that defeated the earlier
  * rectangle-sweep detector.
  */
-function syntheticBathroom({ showerDoorSwing = false } = {}) {
+function syntheticBathroom({ showerDoorSwing = false, omitCistern = false } = {}) {
   const mask = new Uint8Array(WIDTH * HEIGHT);
   const set = (x, y) => {
     if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) mask[y * WIDTH + x] = 1;
@@ -56,7 +56,7 @@ function syntheticBathroom({ showerDoorSwing = false } = {}) {
   outline(25, 198, 145, 232);
   outline(100, 203, 140, 227);
   // WC: cistern against the top wall with a 0.40 m pan hanging off it.
-  outline(158, 25, 182, 38);
+  if (!omitCistern) outline(158, 25, 182, 38);
   ring(170, 48, 10);
 
   const walls = [
@@ -119,6 +119,14 @@ test("a toilet is placed from its pan and reaches back to the wall", () => {
   assert.ok(toilet.y - toilet.height / 2 <= 30, "box reaches the wall face");
 });
 
+test("a round void with no cistern behind it is not a toilet", () => {
+  // A double-door wardrobe encloses one of these between its two swing arcs,
+  // and it otherwise passes every test a WC pan does.
+  const fixtures = detect({ omitCistern: true });
+  assert.equal(fixtures.find((f) => f.kind === "toilet"), undefined,
+    `expected no toilet, got ${fixtures.map((f) => f.kind).join()}`);
+});
+
 /**
  * A kitchen: a run of cabinets across the top wall with a snowflake marking the
  * refrigerated cell, and a free-standing island carrying a basin.
@@ -147,12 +155,16 @@ function syntheticKitchen() {
   filled(16, 16, 24, 244);
   filled(276, 16, 284, 244);
 
-  // Cabinet run across the top wall, divided into cells.
-  outline(25, 25, 225, 57);
-  line(60, 25, 60, 57);
-  line(95, 25, 95, 57);
-  // Snowflake in the second cell: eight arms from a common centre.
-  const cx = 77; const cy = 41; const r = 9;
+  // Cabinet run across the top wall. Drawn the way a kitchen is drawn in plan:
+  // shallow wall units against the wall with the base units and worktop in
+  // front, so the run measured whole is 1.00 m deep and only the front band is
+  // the counter.
+  outline(25, 25, 190, 75);
+  line(25, 40, 190, 40);
+  line(60, 40, 60, 75);
+  line(95, 40, 95, 75);
+  // Snowflake in the second base cell: eight arms from a common centre.
+  const cx = 77; const cy = 57; const r = 9;
   for (let i = 0; i < 8; i += 1) {
     const theta = (Math.PI * i) / 4;
     line(cx, cy, Math.round(cx + r * Math.cos(theta)), Math.round(cy + r * Math.sin(theta)));
@@ -181,6 +193,17 @@ test("a snowflake marks refrigeration, sized to the cabinet cell holding it", ()
   // The cell is 35 px wide between its dividers, not the width of the glyph.
   assert.ok(metres(fridge.width) >= 0.5 && metres(fridge.width) <= 0.9, `width ${metres(fridge.width)}`);
   assert.ok(Math.abs(fridge.x - 77) <= 6, `centred on the cell, got x=${fridge.x}`);
+});
+
+test("a stacked cabinet run yields the worktop band, not its full depth", () => {
+  const counter = detectKitchen().find((f) => f.kind === "countertop");
+  assert.ok(counter, "expected a counter run");
+  // The run is 1.00 m deep in total; the base units in front of the wall
+  // cabinets are 0.70 m of that.
+  const depth = metres(Math.min(counter.width, counter.height));
+  assert.ok(depth >= 0.55 && depth <= 0.82, `depth ${depth}`);
+  // And it is the front band, clear of the wall behind it.
+  assert.ok(counter.y - counter.height / 2 >= 35, "measured from the base units, not the wall");
 });
 
 test("a worktop clear of the walls is an island, not a counter run", () => {

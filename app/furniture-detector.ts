@@ -489,6 +489,70 @@ function trimToDrawnRectangle(
   };
 }
 
+/**
+ * Split a cabinet run into the bands it is drawn as.
+ *
+ * A kitchen elevation is stacked in plan: wall units against the wall, base
+ * units and worktop in front, each a band separated by a line running the whole
+ * length of the run. Measured as one shape the run is far too deep to be a
+ * worktop, so the bands have to be recovered and offered separately — only one
+ * of them is the counter.
+ *
+ * Bands are cut at every line spanning most of the run, so the divisions
+ * between cells along its length are ignored: those run the other way.
+ */
+function splitIntoBands(
+  labels: Int32Array,
+  imgW: number,
+  id: number,
+  box: BoxBounds,
+): BoxBounds[] {
+  const width = box.maxX - box.minX + 1;
+  const height = box.maxY - box.minY + 1;
+  const acrossX = width >= height;
+  const spanLength = acrossX ? width : height;
+  const depth = acrossX ? height : width;
+  if (spanLength < depth * 1.5) return [];
+
+  // Ink along each line perpendicular to the run's length.
+  const profile = new Int32Array(depth);
+  for (let y = box.minY; y <= box.maxY; y += 1) {
+    for (let x = box.minX; x <= box.maxX; x += 1) {
+      if (labels[y * imgW + x] !== id) continue;
+      profile[acrossX ? y - box.minY : x - box.minX] += 1;
+    }
+  }
+  const threshold = Math.max(...profile) * 0.55;
+
+  // Collapse each drawn line, two or three pixels thick, to one position.
+  const lines: number[] = [];
+  for (let i = 0; i < profile.length; i += 1) {
+    if (profile[i] < threshold) continue;
+    if (lines.length && i - lines[lines.length - 1] <= 3) lines[lines.length - 1] = i;
+    else lines.push(i);
+  }
+  if (lines.length < 2) return [];
+
+  // Every pair of boundaries, not just adjacent ones: a worktop is often drawn
+  // with the hob's cell edge across it, which would otherwise split the band in
+  // two and leave neither half worktop-depth. The component's own edges count
+  // as boundaries so the band against the wall is offered too.
+  const bounds = [0, ...lines, depth - 1].sort((a, b) => a - b)
+    .filter((v, i, all) => i === 0 || v - all[i - 1] > 2);
+  const bands: BoxBounds[] = [];
+  for (let i = 0; i < bounds.length - 1; i += 1) {
+    for (let j = i + 1; j < bounds.length; j += 1) {
+      const from = bounds[i];
+      const to = bounds[j];
+      if (to - from < 3) continue;
+      bands.push(acrossX
+        ? { minX: box.minX, maxX: box.maxX, minY: box.minY + from, maxY: box.minY + to }
+        : { minY: box.minY, maxY: box.maxY, minX: box.minX + from, maxX: box.minX + to });
+    }
+  }
+  return bands;
+}
+
 /** Measure the shape descriptors that separate one fixture symbol from another. */
 function describeComponent(
   labels: Int32Array,
@@ -728,6 +792,58 @@ function findIsolatedRings(
   return dedupeRings(results);
 }
 
+/**
+ * Is there a cistern between this pan and the wall behind it?
+ *
+ * A WC always has one: a box spanning at least the pan's width, drawn flush to
+ * the wall, so somewhere in the gap there is a line running the full width of
+ * the fixture. The near miss this rejects is a double-door wardrobe, where the
+ * two swing arcs bow out and meet to enclose a circular void that passes every
+ * test a pan does — but the space between that void and the wall is the empty
+ * inside of the cabinet, crossed by nothing wider than a shelf divider.
+ */
+function hasCisternBehind(
+  mask: Uint8Array,
+  imgW: number,
+  imgH: number,
+  circle: { cx: number; cy: number; r: number },
+  band: { minX: number; minY: number; maxX: number; maxY: number; axis: DetectorWall["axis"] },
+): boolean {
+  const inked = (x: number, y: number) => {
+    const ix = Math.round(x);
+    const iy = Math.round(y);
+    if (ix < 0 || ix >= imgW || iy < 0 || iy >= imgH) return false;
+    return mask[iy * imgW + ix] === 1;
+  };
+  const span = Math.max(2, Math.round(circle.r * 1.2));
+
+  if (band.axis === "horizontal") {
+    const below = circle.cy > band.maxY;
+    const face = below ? band.maxY : band.minY;
+    const near = circle.cy - (below ? circle.r : -circle.r);
+    const from = Math.round(Math.min(face, near));
+    const to = Math.round(Math.max(face, near));
+    for (let y = from; y <= to; y += 1) {
+      let hits = 0;
+      for (let x = circle.cx - span; x <= circle.cx + span; x += 1) if (inked(x, y)) hits += 1;
+      if (hits / Math.max(1, span * 2 + 1) >= 0.6) return true;
+    }
+    return false;
+  }
+
+  const right = circle.cx > band.maxX;
+  const face = right ? band.maxX : band.minX;
+  const near = circle.cx - (right ? circle.r : -circle.r);
+  const from = Math.round(Math.min(face, near));
+  const to = Math.round(Math.max(face, near));
+  for (let x = from; x <= to; x += 1) {
+    let hits = 0;
+    for (let y = circle.cy - span; y <= circle.cy + span; y += 1) if (inked(x, y)) hits += 1;
+    if (hits / Math.max(1, span * 2 + 1) >= 0.6) return true;
+  }
+  return false;
+}
+
 /** Collapse rings that describe the same circle, keeping the best fit. */
 function dedupeRings(rings: Array<{ cx: number; cy: number; r: number; score: number }>) {
   const kept: Array<{ cx: number; cy: number; r: number; score: number }> = [];
@@ -793,6 +909,7 @@ function detectToiletsByBowl(
     // The pan sits just clear of the wall, with the cistern between.
     const gapMetres = band.distance * metresPerPixel;
     if (gapMetres > 0.55) continue;
+    if (!hasCisternBehind(work, imgW, Math.floor(work.length / imgW), circle, band)) continue;
 
     let x: number; let y: number; let width: number; let height: number;
     const across = circle.r * 2.3;
@@ -974,6 +1091,48 @@ function detectComponentFixtures(
       counters.push({ ...c, area: component.area });
       push("countertop", clamp(0.6 + Math.min(0.2, longSide * 0.06), 0.6, 0.84));
       continue;
+    }
+
+    // A kitchen run measured whole is too deep to be a worktop, because the
+    // wall units are drawn stacked behind the base units. Split it and take the
+    // band that is worktop-depth. Requires the wall to run along the length of
+    // the shape, which is what makes it a run at all — linework that merely
+    // ends near a wall is not a cabinet.
+    const runsAlongWall = wm >= hm
+      ? (component.onWall.top || component.onWall.bottom)
+      : (component.onWall.left || component.onWall.right);
+    if (runsAlongWall && longSide > SIZE.counterDepth[1]
+      && within(longSide, SIZE.counterLength) && shortSide > SIZE.counterDepth[1]) {
+      const bands = splitIntoBands(labels, imgW, component.id, component);
+      // The worktop is the band in front: base units stand clear of the wall
+      // cabinets drawn behind them.
+      const fromWall = (band: BoxBounds) => (component.onWall.top ? band.maxY
+        : component.onWall.bottom ? -band.minY
+          : component.onWall.left ? band.maxX
+            : -band.minX);
+      const worktop = bands
+        .map((band) => ({
+          band,
+          depth: Math.min(band.maxX - band.minX, band.maxY - band.minY) * metresPerPixel,
+          length: Math.max(band.maxX - band.minX, band.maxY - band.minY) * metresPerPixel,
+        }))
+        .filter((b) => within(b.depth, SIZE.counterDepth) && within(b.length, SIZE.counterLength))
+        .sort((a, b) => fromWall(b.band) - fromWall(a.band))[0];
+      if (worktop) {
+        const box = worktop.band;
+        counters.push({ ...box, area: component.area });
+        results.push({
+          id: `cc-${results.length + 1}`,
+          kind: "countertop",
+          x: (box.minX + box.maxX) / 2,
+          y: (box.minY + box.maxY) / 2,
+          width: box.maxX - box.minX,
+          height: box.maxY - box.minY,
+          rotation: 0,
+          confidence: 0.66,
+        });
+        continue;
+      }
     }
   }
 
