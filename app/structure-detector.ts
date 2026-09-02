@@ -92,6 +92,22 @@ export type DetectedStructure = {
   /** Rotation of the source plan relative to its own principal wall axes. */
   sourceRotationDegrees?: number;
   rotationCenter?: [number, number];
+  /**
+   * Everything the fixture pass needs, carried so it can be re-run once the
+   * scale shared by every level is known. Removed before the structures are
+   * returned; nothing outside this module should read it.
+   */
+  fixtureInputs?: FixtureInputs;
+};
+
+/** Inputs for a re-run of fixture detection at the shared project scale. */
+type FixtureInputs = {
+  mask: Uint8Array;
+  width: number;
+  footprint: Bounds;
+  wallThickness: number;
+  obstacles: FixtureObstacle[];
+  walls: DetectorWall[];
 };
 
 type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
@@ -2461,6 +2477,14 @@ function detectFloorStructureAligned(
   const fixtures = detectFurniture(mediumMask, width, footprintBounds, wallThickness,
     stairObstacles, 60, detectorWalls, localMetresPerPixel);
   return {
+    fixtureInputs: {
+      mask: mediumMask,
+      width,
+      footprint: footprintBounds,
+      wallThickness,
+      obstacles: stairObstacles,
+      walls: detectorWalls,
+    },
     regionId: region.id,
     sourceWidth: width,
     sourceHeight: height,
@@ -2523,7 +2547,34 @@ export function detectFloorStructures(
   height: number,
   regions: SourceRegion[],
 ) {
-  return Object.fromEntries(regions.map((region) => [region.id, detectFloorStructure(pixels, width, height, region)]));
+  const structures: Record<string, DetectedStructure> = Object.fromEntries(
+    regions.map((region) => [region.id, detectFloorStructure(pixels, width, height, region)]),
+  );
+
+  // Fixtures are classified by real-world size, so they must all be measured
+  // against one scale. Each level's own doors give an estimate good to about a
+  // quarter, which is the difference between a kitchen run and a wardrobe, or
+  // between an island and a bath — so once every level has been read, resolve
+  // the scale they share and measure the fixtures again against it.
+  const shared = resolveScaleFromDoors(structures);
+  if (shared) {
+    for (const structure of Object.values(structures)) {
+      const inputs = structure.fixtureInputs;
+      if (!inputs) continue;
+      structure.fixtures = detectFurniture(
+        inputs.mask,
+        inputs.width,
+        inputs.footprint,
+        inputs.wallThickness,
+        inputs.obstacles,
+        60,
+        inputs.walls,
+        shared.metresPerPixel,
+      );
+    }
+  }
+  for (const structure of Object.values(structures)) delete structure.fixtureInputs;
+  return structures;
 }
 
 function normalizedStairBox(stair: DetectedStair, footprint: DetectedStructure["footprint"]) {

@@ -19,7 +19,8 @@ const { default: sharp } = await import("sharp");
 const [bx0, by0, bx1, by1] = process.argv.slice(2).map(Number);
 const hasBox = [bx0, by0, bx1, by1].every((v) => Number.isFinite(v));
 
-const buffer = await readFile(new URL("rowhouse.png", dir));
+const FIXTURE = process.env.FIXTURE ?? "rowhouse.jpg";
+const buffer = await readFile(new URL(FIXTURE, dir));
 const meta = await sharp(buffer).metadata();
 const maxSide = 1280;
 const scale = Math.min(1, maxSide / Math.max(meta.width, meta.height));

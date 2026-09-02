@@ -6,7 +6,14 @@
 // (using the door-derived project scale) so thresholds can be tuned against
 // real-world dimensions rather than guessed.
 //
-//   node --experimental-strip-types tests/benchmark/bathroom-diag.mjs
+//   node --experimental-strip-types tests/benchmark/bathroom-diag.mjs [fixture]
+//
+// Run the fixture at the resolution it is actually uploaded at. The pipeline
+// only downscales (to a 1280 px long side) and never enlarges, so feeding it an
+// upscaled copy of a small plan tests a resolution the app will never see:
+// wall thickness doubles, thin strokes survive that would otherwise be lost,
+// and detections appear that do not appear in the deployed app. rowhouse-2x.png
+// is kept only to check that thresholds hold across scales.
 //
 // Output: tests/benchmark/out/<fixture>-overlay.png
 
@@ -23,7 +30,7 @@ await mkdir(outDir, { recursive: true });
 
 const { default: sharp } = await import("sharp");
 
-const FIXTURE = process.argv[2] ?? "rowhouse.png";
+const FIXTURE = process.argv[2] ?? "rowhouse.jpg";
 
 const KIND_COLOR = {
   toilet: "#e0218a",

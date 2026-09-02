@@ -1041,6 +1041,23 @@ function detectComponentFixtures(
       });
     };
 
+    // Anything with a basin let into it is a worktop. Tested first: a basin is
+    // drawn evidence about what this shape is, where the tests below infer a
+    // fixture from proportion alone. An island is about the size of a bath and
+    // would otherwise be taken for one.
+    const hasBasin = c.closedRect && c.interior <= 0.45 && enclosesBasin(c, component.area)
+      && within(shortSide, SIZE.islandShort) && within(longSide, SIZE.islandLong);
+    if (hasBasin) {
+      counters.push({ ...c, area: component.area });
+      // An island stands clear of the wall along its length; a run is drawn
+      // against one.
+      const longSideOnWall = wm >= hm
+        ? (component.onWall.top || component.onWall.bottom)
+        : (component.onWall.left || component.onWall.right);
+      push(longSideOnWall ? "countertop" : "island", 0.72);
+      continue;
+    }
+
     // Shower tray: a hollow, near-square closed rectangle. Confirmed against
     // neighbouring sanitary fixtures further down — an empty square alone is
     // just as likely to be a closet.
@@ -1055,19 +1072,6 @@ function detectComponentFixtures(
     if (c.closedRect && c.interior <= 0.2
       && within(longSide, SIZE.tubLong) && within(shortSide, SIZE.tubShort)) {
       push("bathtub", 0.7);
-      continue;
-    }
-
-    // Anything with a basin let into it is a worktop. An island is free of the
-    // wall along its length, a run is drawn against one.
-    const hasBasin = c.closedRect && c.interior <= 0.45 && enclosesBasin(c, component.area)
-      && within(shortSide, SIZE.islandShort) && within(longSide, SIZE.islandLong);
-    if (hasBasin) {
-      counters.push({ ...c, area: component.area });
-      const longSideOnWall = wm >= hm
-        ? (component.onWall.top || component.onWall.bottom)
-        : (component.onWall.left || component.onWall.right);
-      push(longSideOnWall ? "countertop" : "island", 0.72);
       continue;
     }
 
