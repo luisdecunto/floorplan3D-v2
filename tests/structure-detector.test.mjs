@@ -80,6 +80,25 @@ test("thick strokes, door evidence and an exterior rail become structure", () =>
   assert.ok(structure.confidence >= 0.65);
 });
 
+test("a stair run stops at the wall it climbs towards", () => {
+  const { pixels, width, height } = syntheticPlan();
+  const region = { id: "level-stair", name: "First floor", x: 0, y: 0, width: 1, height: 1, confidence: 0.9, hasOutdoorArea: true };
+  const structure = detectFloorStructure(pixels, width, height, region);
+  // Treads paired with linework outside the façade used to leave the flight
+  // reaching through the exterior wall, putting the modelled stair outside the
+  // building. Whatever is detected must stay within the walls.
+  for (const stair of structure.stairs) {
+    const top = Math.min(...structure.walls
+      .filter((wall) => wall.axis === "horizontal")
+      .map((wall) => (wall.start[1] + wall.end[1]) / 2 - wall.thickness / 2));
+    assert.ok(stair.y >= top - 1,
+      `stair top ${stair.y.toFixed(1)} should not pass the outer wall face at ${top.toFixed(1)}`);
+    assert.ok(stair.x >= structure.footprint.x - 1
+      && stair.x + stair.width <= structure.footprint.x + structure.footprint.width + 1,
+      "stair should stay inside the footprint");
+  }
+});
+
 test("walls and swing-door symbols survive a rotated source plan", () => {
   const { pixels, width, height } = rotatePlan(syntheticPlan(), 11);
   const region = { id: "level-rotated", name: "Rotated plan", x: 0, y: 0, width: 1, height: 1, confidence: 0.9, hasOutdoorArea: true };

@@ -2187,6 +2187,74 @@ export function inspectStructureEvidence(
  * rather than a stringer belonging to the stair itself), and leaves a box still
  * large enough to be a stair. Fallback in every other case: the box is unchanged.
  */
+/**
+ * Pull the ends of a stair run back to the walls that cross it.
+ *
+ * `clampStairsToFlankingWalls` bounds the shaft sideways, using the walls that
+ * run alongside it. Nothing bounded the run itself, so a flight whose treads
+ * were paired with linework beyond the building — a dimension tick above the
+ * façade is enough — was left reaching through the exterior wall and modelled
+ * outside the house.
+ *
+ * A wall crossing the run is a hard end: the flight stops at its face. Only the
+ * ends are clamped, never a wall lying across the middle of the box, which
+ * would halve a stair that legitimately passes a partition on its way up.
+ */
+function clampStairRunToCrossingWalls(
+  stairs: DetectedStair[],
+  walls: DetectedWall[],
+): DetectedStair[] {
+  if (!stairs.length || !walls.length) return stairs;
+  const MIN_SPAN_COVERAGE = 0.6; // the wall must cross most of the stair's width
+  const MIN_REMAINING = 0.45;    // never shrink the run below this of the original
+
+  return stairs.map((stair) => {
+    const vertical = stair.runAxis === "vertical";
+    const crossMin = vertical ? stair.x : stair.y;
+    const crossMax = vertical ? stair.x + stair.width : stair.y + stair.height;
+    const runMin = vertical ? stair.y : stair.x;
+    const runMax = vertical ? stair.y + stair.height : stair.x + stair.width;
+    const originalRun = runMax - runMin;
+    const runCenter = (runMin + runMax) / 2;
+
+    let newMin = runMin;
+    let newMax = runMax;
+
+    for (const wall of walls) {
+      if (wall.axis === stair.runAxis) continue;
+      const line = vertical
+        ? (wall.start[1] + wall.end[1]) / 2
+        : (wall.start[0] + wall.end[0]) / 2;
+      const half = wall.thickness / 2;
+      const bandFrom = line - half;
+      const bandTo = line + half;
+      if (bandTo <= runMin || bandFrom >= runMax) continue;
+
+      const wallCrossFrom = Math.min(
+        vertical ? wall.start[0] : wall.start[1],
+        vertical ? wall.end[0] : wall.end[1],
+      );
+      const wallCrossTo = Math.max(
+        vertical ? wall.start[0] : wall.start[1],
+        vertical ? wall.end[0] : wall.end[1],
+      );
+      const overlap = Math.max(0, Math.min(wallCrossTo, crossMax) - Math.max(wallCrossFrom, crossMin));
+      if (overlap < (crossMax - crossMin) * MIN_SPAN_COVERAGE) continue;
+
+      // Wholly past one end, so the flight stops here rather than being cut.
+      if (bandTo < runCenter) newMin = Math.max(newMin, bandTo);
+      else if (bandFrom > runCenter) newMax = Math.min(newMax, bandFrom);
+    }
+
+    if (newMax - newMin >= originalRun - 0.5) return stair;
+    if (newMax - newMin < originalRun * MIN_REMAINING) return stair;
+
+    return vertical
+      ? { ...stair, y: newMin, height: newMax - newMin }
+      : { ...stair, x: newMin, width: newMax - newMin };
+  });
+}
+
 function clampStairsToFlankingWalls(
   stairs: DetectedStair[],
   walls: DetectedWall[],
@@ -2412,10 +2480,13 @@ function detectFloorStructureAligned(
   );
   // Trim stair boxes that swallowed adjacent-room linework before anything
   // downstream (stairwell opening, railings, obstacles) is derived from them.
-  const stairs = clampStairsToFlankingWalls(
-    detectStairs(rawSegments, mediumMask, width, height, footprintBounds, minimumDimension, wallThickness),
+  const stairs = clampStairRunToCrossingWalls(
+    clampStairsToFlankingWalls(
+      detectStairs(rawSegments, mediumMask, width, height, footprintBounds, minimumDimension, wallThickness),
+      walls,
+      wallThickness,
+    ),
     walls,
-    wallThickness,
   );
   const walledWithRails = markBalustradeSpans(walls, stairs, mediumMask, width, height, wallThickness);
   const openingCount = walledWithRails.reduce((sum, wall) => sum + wall.openings.length, 0);

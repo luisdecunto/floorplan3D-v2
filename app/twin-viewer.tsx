@@ -660,6 +660,18 @@ function OutdoorAreaModel({ area, elevation }: { area: OutdoorArea; elevation: n
   );
 }
 
+/**
+ * Standing heights, in metres. Fixture detection recovers a footprint from the
+ * plan but nothing about height, so these come from the sizes joinery is
+ * actually built to.
+ */
+/** Worktop surface: the European kitchen and vanity standard. */
+const WORKTOP_HEIGHT = 0.9;
+/** A wardrobe or closet run — full height, unlike a base cupboard. */
+const CUPBOARD_HEIGHT = 1.8;
+/** Thickness of the worktop slab laid over a carcass. */
+const SLAB = 0.04;
+
 function FurnitureModel({ fixture, elevation }: { fixture: Fixture; elevation: number }) {
   const y = elevation + 0.06; // sit on the floor slab
   const { x, z, width, depth, rotation } = fixture;
@@ -692,31 +704,40 @@ function FurnitureModel({ fixture, elevation }: { fixture: Fixture; elevation: n
         </mesh>
       </group>
     );
+    // A basin is only ever detected inside a counter run, so it belongs at
+    // worktop height, let into the surface, rather than standing on the floor.
     case "sink": return (
-      <group position={[x, y, z]} rotation={[0, rotation, 0]}>
-        <mesh castShadow receiveShadow>
-          <boxGeometry args={[width, 0.05, depth]} />
-          <meshStandardMaterial color="#d8d4cc" roughness={0.5} />
-        </mesh>
-        <mesh position={[0, 0.04, 0]} castShadow>
-          <boxGeometry args={[width * 0.75, 0.06, depth * 0.8]} />
+      <group position={[x, y + WORKTOP_HEIGHT, z]} rotation={[0, rotation, 0]}>
+        {/* Bowl, recessed below the surface */}
+        <mesh position={[0, -0.09, 0]} castShadow receiveShadow>
+          <boxGeometry args={[width * 0.86, 0.18, depth * 0.8]} />
           <meshStandardMaterial color="#b5cfd4" roughness={0.28} metalness={0.05} />
         </mesh>
-        {/* Drain dot */}
-        <mesh position={[0, 0.07, 0]}>
+        {/* Rim, standing just proud of the worktop it is set into */}
+        <mesh position={[0, 0.012, 0]} castShadow>
+          <boxGeometry args={[width, 0.024, depth]} />
+          <meshStandardMaterial color="#d8d4cc" roughness={0.45} metalness={0.12} />
+        </mesh>
+        {/* Drain */}
+        <mesh position={[0, -0.016, 0]}>
           <cylinderGeometry args={[Math.min(width, depth) * 0.06, Math.min(width, depth) * 0.06, 0.02, 8]} />
           <meshStandardMaterial color="#888" metalness={0.6} roughness={0.3} />
+        </mesh>
+        {/* Tap at the back edge */}
+        <mesh position={[0, 0.12, -depth * 0.34]} castShadow>
+          <cylinderGeometry args={[0.018, 0.02, 0.22, 10]} />
+          <meshStandardMaterial color="#c6c8cc" metalness={0.75} roughness={0.25} />
         </mesh>
       </group>
     );
     case "island": return (
-      <group position={[x, y + 0.44, z]} rotation={[0, rotation, 0]}>
-        <mesh castShadow receiveShadow>
-          <boxGeometry args={[width, 0.9, depth]} />
+      <group position={[x, y, z]} rotation={[0, rotation, 0]}>
+        <mesh position={[0, (WORKTOP_HEIGHT - SLAB) / 2, 0]} castShadow receiveShadow>
+          <boxGeometry args={[width, WORKTOP_HEIGHT - SLAB, depth]} />
           <meshStandardMaterial color="#c8bfa8" roughness={0.72} />
         </mesh>
-        <mesh position={[0, 0.46, 0]} castShadow>
-          <boxGeometry args={[width + 0.02, 0.04, depth + 0.02]} />
+        <mesh position={[0, WORKTOP_HEIGHT - SLAB / 2, 0]} castShadow>
+          <boxGeometry args={[width + 0.02, SLAB, depth + 0.02]} />
           <meshStandardMaterial color="#d4cdb8" roughness={0.5} metalness={0.08} />
         </mesh>
       </group>
@@ -774,21 +795,28 @@ function FurnitureModel({ fixture, elevation }: { fixture: Fixture; elevation: n
       </group>
     );
     case "cupboard": return (
-      <group position={[x, y + 0.4, z]} rotation={[0, rotation, 0]}>
+      <group position={[x, y + CUPBOARD_HEIGHT / 2, z]} rotation={[0, rotation, 0]}>
         <mesh castShadow receiveShadow>
-          <boxGeometry args={[width, 0.8, depth]} />
+          <boxGeometry args={[width, CUPBOARD_HEIGHT, depth]} />
           <meshStandardMaterial color="#c4b89a" roughness={0.65} />
+        </mesh>
+        {/* Door split down the long face, so it reads as joinery from across a room */}
+        <mesh position={[0, 0, depth / 2 + 0.004]}>
+          <boxGeometry args={[0.012, CUPBOARD_HEIGHT * 0.94, 0.008]} />
+          <meshStandardMaterial color="#9d9376" roughness={0.7} />
         </mesh>
       </group>
     );
+    // Carcass plus slab add up to exactly WORKTOP_HEIGHT, so a basin placed at
+    // that height meets the surface it is let into.
     case "countertop": return (
-      <group position={[x, y + 0.44, z]} rotation={[0, rotation, 0]}>
-        <mesh castShadow receiveShadow>
-          <boxGeometry args={[width, 0.9, depth]} />
+      <group position={[x, y, z]} rotation={[0, rotation, 0]}>
+        <mesh position={[0, (WORKTOP_HEIGHT - SLAB) / 2, 0]} castShadow receiveShadow>
+          <boxGeometry args={[width, WORKTOP_HEIGHT - SLAB, depth]} />
           <meshStandardMaterial color="#bab0a0" roughness={0.6} />
         </mesh>
-        <mesh position={[0, 0.46, 0]} castShadow>
-          <boxGeometry args={[width + 0.01, 0.03, depth + 0.01]} />
+        <mesh position={[0, WORKTOP_HEIGHT - SLAB / 2, 0]} castShadow>
+          <boxGeometry args={[width + 0.01, SLAB, depth + 0.01]} />
           <meshStandardMaterial color="#d0c8b8" roughness={0.4} metalness={0.1} />
         </mesh>
       </group>
