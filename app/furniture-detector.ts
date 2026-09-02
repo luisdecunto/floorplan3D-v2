@@ -407,10 +407,10 @@ function detectWallStripFixtures(
   obstacles: FixtureObstacle[],
 ): DetectedFixture[] {
   const imgH = mask.length / imgW;
-  const maxDepth = Math.round(wallThickness * 2.8);
-  const minDepth = Math.round(wallThickness * 0.5);
-  const minRun = Math.round(wallThickness * 1.8);
-  const densityThreshold = 0.06;
+  const maxDepth = Math.round(wallThickness * 3.5);
+  const minDepth = Math.max(2, Math.round(wallThickness * 0.2));
+  const minRun = Math.max(3, Math.round(wallThickness * 0.8));
+  const densityThreshold = 0.02;
   const step = Math.max(1, Math.round(wallThickness * 0.25));
   const results: DetectedFixture[] = [];
 
@@ -504,20 +504,25 @@ function detectWallStripFixtures(
   return deduplicateFixtures(cleared);
 }
 
-/** Classify a wall-strip run into a fixture kind based on its shape. */
+/** Classify a wall-strip run into a fixture kind based on its shape.
+ * Currently permissive for diagnostic tuning — returns a kind for any
+ * run that meets minimum size thresholds so we can see everything the
+ * scanner finds on the plan review overlay. */
 function classifyWallStrip(
   aspect: number,
   runLength: number,
   depth: number,
   wallThickness: number,
 ): DetectedFixture["kind"] | null {
-  // Countertop: long run (3+ wallThickness), shallow depth (1-2.5 wallThickness)
-  if (runLength >= wallThickness * 3 && depth >= wallThickness * 0.6 && depth <= wallThickness * 2.8 && aspect >= 2.0) {
+  if (runLength >= wallThickness * 3 && aspect >= 2.0) {
     return "countertop";
   }
-  // Cupboard: medium-to-long run, shallow depth, narrower than a countertop
-  if (runLength >= wallThickness * 2 && depth >= wallThickness * 0.4 && depth <= wallThickness * 2.0 && aspect >= 1.6) {
+  if (runLength >= wallThickness * 1.5 && aspect >= 1.3) {
     return "cupboard";
+  }
+  // Catch-all for small wall-adjacent ink (sinks, appliances, etc.)
+  if (runLength >= wallThickness * 0.8 && depth >= wallThickness * 0.2) {
+    return "island";
   }
   return null;
 }

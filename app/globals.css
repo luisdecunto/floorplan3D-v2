@@ -989,6 +989,10 @@ select:focus-visible {
 .detected-stair line { stroke: #7e4eaa; stroke-width: 1.35; }
 .detected-fixture { fill: rgba(224, 120, 40, 0.18); stroke: #e07828; stroke-width: 1.5; opacity: 0.4; transition: opacity 140ms ease; }
 .detected-fixture.active { opacity: 0.92; }
+.detected-fixture.fixture-countertop { fill: rgba(40, 160, 80, 0.22); stroke: #28a050; }
+.detected-fixture.fixture-cupboard { fill: rgba(180, 100, 40, 0.22); stroke: #b46428; }
+.detected-fixture.fixture-stove { fill: rgba(200, 50, 50, 0.22); stroke: #c83232; }
+.detected-fixture.fixture-island { fill: rgba(120, 120, 180, 0.18); stroke: #7878b4; }
 .region-overlay { position: absolute; inset: 0; z-index: 3; }
 .detection-legend {
   position: absolute;
