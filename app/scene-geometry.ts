@@ -143,6 +143,98 @@ function stairEnds(stair: Stair) {
   };
 }
 
+/**
+ * A straight flight that turns through ninety degrees onto the floor above.
+ *
+ * The half-turn built below sends two flights up side by side with a landing
+ * between them, which is a different staircase: it arrives back above where it
+ * started. A winder carries on past the turn, so its flight and its sweep run
+ * at right angles and it arrives to one side. Modelling one as the other put
+ * the steps across open floor and left the arrival in the wrong place.
+ *
+ * The turn is expressed in the same three pieces the half-turn uses — a run, a
+ * corner, a second run — so it renders through the same path; only their
+ * arrangement differs, the second run leaving the corner sideways rather than
+ * doubling back.
+ */
+function quarterTurnConnection(
+  lowerLevelId: string,
+  upperLevelId: string,
+  lowerStair: Stair,
+  turn: { winder: NonNullable<Stair["winder"]>; flight: NonNullable<Stair["flight"]> },
+  opening: StairwellOpening,
+  fromElevation: number,
+  toElevation: number,
+): StairConnection | null {
+  const { winder, flight } = turn;
+  const vertical = lowerStair.runAxis === "vertical";
+  // Along the run: the flight climbs towards the winder.
+  const flightRunCenter = vertical ? flight.z : flight.x;
+  const winderRunCenter = vertical ? winder.z : winder.x;
+  const flightRunHalf = (vertical ? flight.depth : flight.width) / 2;
+  const winderRunHalf = (vertical ? winder.depth : winder.width) / 2;
+  const towardsWinder = Math.sign(winderRunCenter - flightRunCenter) || -1;
+  // Across it: the winder reaches past the flight on the side it turns towards.
+  const flightCross = vertical ? flight.x : flight.z;
+  const winderCross = vertical ? winder.x : winder.z;
+  const winderCrossHalf = (vertical ? winder.width : winder.depth) / 2;
+  const width = Math.max(0.6, Math.min(vertical ? flight.width : flight.depth, winderRunHalf * 2));
+
+  const turnDirection = Math.sign(winderCross - flightCross) || -1;
+  const crossReach = winderCross + turnDirection * (winderCrossHalf - width / 2);
+  if (Math.abs(crossReach - flightCross) < width * 0.4) return null;
+
+  const foot = flightRunCenter - towardsWinder * flightRunHalf;
+  const corner = winderRunCenter;
+  const runLength = Math.abs(corner - foot);
+  const sweepLength = Math.abs(crossReach - flightCross);
+  if (runLength < 0.4 || sweepLength < 0.3) return null;
+
+  // How many steps there are follows from the height climbed, at a normal
+  // riser. Counting the tread lines instead over-counts badly: the plan draws
+  // the flight below the cut as well, which on the reference plan gave a
+  // staircase of twenty-four steps for a rise that needs seventeen.
+  const rise = toElevation - fromElevation;
+  const steps = Math.max(6, Math.round(rise / 0.18));
+  const total = runLength + sweepLength;
+  const flightSteps = Math.max(3, Math.round(steps * (runLength / total)));
+  const sweepSteps = Math.max(2, steps - flightSteps);
+  const cornerElevation = fromElevation
+    + (toElevation - fromElevation) * (flightSteps / Math.max(1, flightSteps + sweepSteps));
+
+  const point = (along: number, across: number): [number, number] => (
+    vertical ? [across, along] : [along, across]
+  );
+  return {
+    id: `${lowerLevelId}-to-${upperLevelId}`,
+    lowerLevelId,
+    upperLevelId,
+    opening,
+    width,
+    lowerFlight: {
+      start: point(foot, flightCross),
+      end: point(corner, flightCross),
+      fromElevation,
+      toElevation: cornerElevation,
+      stepCount: flightSteps,
+    },
+    upperFlight: {
+      start: point(corner, flightCross),
+      end: point(corner, crossReach),
+      fromElevation: cornerElevation,
+      toElevation,
+      stepCount: sweepSteps,
+    },
+    landing: {
+      x: vertical ? flightCross : corner,
+      z: vertical ? corner : flightCross,
+      width: vertical ? width : width,
+      depth: width,
+      elevation: cornerElevation,
+    },
+  };
+}
+
 export function buildStairConnections(levels: Level[], explodeDistance = 0): StairConnection[] {
   const ordered = levels
     .map((level, index) => ({ level, index }))
@@ -169,6 +261,29 @@ export function buildStairConnections(levels: Level[], explodeDistance = 0): Sta
     if (!opening) continue;
     const fromElevation = lower.level.elevation + lower.index * explodeDistance + 0.06;
     const toElevation = upper.level.elevation + upper.index * explodeDistance + 0.04;
+
+    // Where the plan shows a turn, build the stair that was drawn rather than
+    // the half-turn assumed below. The upper floor's reading is preferred: it
+    // shows the sweep arriving, where the lower floor shows it cut through.
+    const turn = (pair.upperStair.winder && pair.upperStair.flight
+      ? { winder: pair.upperStair.winder, flight: pair.upperStair.flight }
+      : pair.lowerStair.winder && pair.lowerStair.flight
+        ? { winder: pair.lowerStair.winder, flight: pair.lowerStair.flight }
+        : null);
+    if (turn) {
+      const quarter = quarterTurnConnection(
+        lower.level.id,
+        upper.level.id,
+        pair.lowerStair,
+        turn,
+        opening,
+        fromElevation,
+        toElevation,
+        pair.lowerStair.stepCount + pair.upperStair.stepCount,
+      );
+      if (quarter) { connections.push(quarter); continue; }
+    }
+
     const landingElevation = (fromElevation + toElevation) / 2;
     const verticalRun = pair.lowerStair.runAxis === "vertical" && pair.upperStair.runAxis === "vertical";
     const clearance = 0.08;

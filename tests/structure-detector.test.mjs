@@ -254,6 +254,64 @@ test("a straight flight is left as one rectangle", () => {
   assert.equal(split.flight, undefined);
 });
 
+test("a turned stair climbs and then sweeps sideways onto the floor above", () => {
+  const slab = { x: 0, z: 0, width: 9, depth: 8 };
+  const stair = {
+    id: "s", x: 0.05, z: -2.2, width: 2.18, depth: 2.5,
+    runAxis: "vertical", stepCount: 14, confidence: 0.8,
+    // Flight up the right-hand side; winder sweeping left across the top.
+    flight: { x: 0.6, z: -1.7, width: 1.1, depth: 1.5 },
+    winder: { x: 0.05, z: -2.9, width: 2.18, depth: 1.1 },
+  };
+  const levels = [
+    { id: "lower", name: "Ground", elevation: 0, height: 2.7, slab, walls: [], stairs: [stair] },
+    { id: "upper", name: "First", elevation: 3, height: 2.7, slab, walls: [], stairs: [stair] },
+  ];
+  const [connection] = buildStairConnections(levels);
+  assert.ok(connection, "expected a connection between the floors");
+
+  const run = [
+    connection.lowerFlight.end[0] - connection.lowerFlight.start[0],
+    connection.lowerFlight.end[1] - connection.lowerFlight.start[1],
+  ];
+  const sweep = [
+    connection.upperFlight.end[0] - connection.upperFlight.start[0],
+    connection.upperFlight.end[1] - connection.upperFlight.start[1],
+  ];
+  const dot = (run[0] * sweep[0] + run[1] * sweep[1])
+    / (Math.hypot(...run) * Math.hypot(...sweep));
+  // A quarter turn, not the half turn that doubles back over its own flight.
+  assert.ok(Math.abs(dot) < 0.2, `run and sweep should be perpendicular, cosine ${dot.toFixed(2)}`);
+  // The two meet, so the stair is continuous.
+  assert.deepEqual(connection.upperFlight.start, connection.lowerFlight.end);
+  // And it climbs the whole way at a normal riser.
+  const steps = connection.lowerFlight.stepCount + connection.upperFlight.stepCount;
+  const riser = (connection.upperFlight.toElevation - connection.lowerFlight.fromElevation) / steps;
+  assert.ok(riser > 0.14 && riser < 0.21, `riser ${riser.toFixed(3)} should be a normal step height`);
+});
+
+test("a straight stair still builds a half turn with a landing", () => {
+  const slab = { x: 0, z: 0, width: 9, depth: 8 };
+  const stair = { id: "s", x: 0, z: -2, width: 2, depth: 2.6, runAxis: "vertical", stepCount: 14, confidence: 0.8 };
+  const levels = [
+    { id: "lower", name: "Ground", elevation: 0, height: 2.7, slab, walls: [], stairs: [stair] },
+    { id: "upper", name: "First", elevation: 3, height: 2.7, slab, walls: [], stairs: [stair] },
+  ];
+  const [connection] = buildStairConnections(levels);
+  assert.ok(connection, "expected a connection");
+  const run = [
+    connection.lowerFlight.end[0] - connection.lowerFlight.start[0],
+    connection.lowerFlight.end[1] - connection.lowerFlight.start[1],
+  ];
+  const sweep = [
+    connection.upperFlight.end[0] - connection.upperFlight.start[0],
+    connection.upperFlight.end[1] - connection.upperFlight.start[1],
+  ];
+  const dot = (run[0] * sweep[0] + run[1] * sweep[1])
+    / (Math.hypot(...run) * Math.hypot(...sweep));
+  assert.ok(dot < -0.8, `without a turn the flights should double back, cosine ${dot.toFixed(2)}`);
+});
+
 test("a winder keeps each floor's own stair width", () => {
   // A turned stair sweeps wider at the top than the straight flight below it,
   // so the two plans show different widths on purpose. Squaring them off would
