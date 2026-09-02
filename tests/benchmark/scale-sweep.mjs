@@ -26,7 +26,10 @@ for (const factor of [0.6, 0.8, 1, 1.4, 2, 3]) {
     counts[f.kind] = (counts[f.kind] ?? 0) + 1; total += 1;
   }
   const order = Object.keys(counts).sort().map((k) => `${k}:${counts[k]}`).join(" ");
+  // Pixels per metre is what detection actually depends on; below roughly 22
+  // the fixture pass starts losing symbols without saying so.
+  const perMetre = mpp ? (1 / mpp).toFixed(1) : "?";
   console.log(`${String(factor).padStart(4)}x  source ${String(sw).padStart(4)}x${String(sh).padStart(4)}` +
     ` -> working ${String(info.width).padStart(4)}x${String(info.height).padStart(4)}` +
-    `  regions=${regions.length}  total=${String(total).padStart(2)}  ${order}`);
+    `  ${String(perMetre).padStart(5)} px/m  total=${String(total).padStart(2)}  ${order}`);
 }
