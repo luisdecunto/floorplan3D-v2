@@ -2431,20 +2431,30 @@ function detectFloorStructureAligned(
     maxX: stair.x + stair.width + wallThickness,
     maxY: stair.y + stair.height + wallThickness,
   }));
-  const wallObstacles: FixtureObstacle[] = walledWithRails.map((wall) => ({
-    minX: Math.min(wall.start[0], wall.end[0]) - wall.thickness,
-    minY: Math.min(wall.start[1], wall.end[1]) - wall.thickness,
-    maxX: Math.max(wall.start[0], wall.end[0]) + wall.thickness,
-    maxY: Math.max(wall.start[1], wall.end[1]) + wall.thickness,
-  }));
+  // Walls are not supplied as obstacles: the component detector erases them
+  // from its own working mask, and wall-adjacent fixtures — which is most of
+  // them — would otherwise be discarded for overlapping a wall band.
   const detectorWalls: DetectorWall[] = walledWithRails.map((w) => ({
     axis: w.axis,
     start: w.start,
     end: w.end,
     thickness: w.thickness,
   }));
+  // The component fixture detector classifies by real-world size, so it needs a
+  // pixel-to-metre ratio here — before the shared project scale is resolved
+  // across levels. Derive a provisional one from this level's own symbol-
+  // confirmed doors, using the same reference width as resolveScaleFromDoors.
+  const localDoorWidths = walledWithRails
+    .flatMap((wall) => wall.openings)
+    .filter((opening) => opening.kind === "door" && opening.evidence === "symbol")
+    .map((opening) => opening.width)
+    .filter((openingWidth) => openingWidth >= 12 && openingWidth <= 90)
+    .sort((a, b) => a - b);
+  const localMetresPerPixel = localDoorWidths.length
+    ? REFERENCE_DOOR_WIDTH_METRES / localDoorWidths[Math.floor(localDoorWidths.length / 2)]
+    : undefined;
   const fixtures = detectFurniture(mediumMask, width, footprintBounds, wallThickness,
-    stairObstacles, 60, detectorWalls);
+    stairObstacles, 60, detectorWalls, localMetresPerPixel);
   return {
     regionId: region.id,
     sourceWidth: width,
