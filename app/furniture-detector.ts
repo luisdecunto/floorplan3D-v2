@@ -159,7 +159,7 @@ export function detectStoves(
  */
 function nestingIsExpected(a: DetectedFixture, b: DetectedFixture): boolean {
   const hosts = new Set(["countertop", "island", "cupboard"]);
-  const inner = new Set(["sink", "stove"]);
+  const inner = new Set(["sink", "stove", "fridge"]);
   return (inner.has(a.kind) && hosts.has(b.kind)) || (inner.has(b.kind) && hosts.has(a.kind));
 }
 
@@ -215,6 +215,8 @@ export type DetectorWall = {
 
 /** A labelled blob of ink with the descriptors classification needs. */
 export type InkComponent = {
+  /** Label used for this blob in the component map. */
+  id: number;
   minX: number; minY: number; maxX: number; maxY: number;
   /** Ink pixel count. */
   area: number;
@@ -232,6 +234,16 @@ export type InkComponent = {
   interior: number;
   /** True when all four sides are well covered: a closed rectangle. */
   closedRect: boolean;
+  /**
+   * The rectangle this symbol was drawn as, when other linework merged into the
+   * component and stretched its bounding box. Null when the box already is the
+   * drawn shape, or when no rectangle can be read out of it.
+   *
+   * Kept alongside the raw box rather than replacing it: rectangular fixtures
+   * want this, while the WC detector must keep the full box or the pan it looks
+   * for would sit outside the component it is matched against.
+   */
+  rect: (BoxBounds & { width: number; height: number; interior: number; closedRect: boolean }) | null;
 };
 
 /** Paint wall bands out of a copy of the mask so fixtures separate from them. */
@@ -353,7 +365,7 @@ function measureBox(
   area: number,
   walls: DetectorWall[],
   wallTolerance: number,
-): Omit<InkComponent, "minX" | "minY" | "maxX" | "maxY"> {
+): Omit<InkComponent, "id" | "minX" | "minY" | "maxX" | "maxY" | "rect"> {
   const width = bounds.maxX - bounds.minX + 1;
   const height = bounds.maxY - bounds.minY + 1;
   const band = Math.max(1, Math.round(Math.min(width, height) * 0.12));
@@ -465,12 +477,11 @@ function trimToDrawnRectangle(
   const left = onWall.left ? 0 : firstAbove(colInk, colThreshold);
   const right = onWall.right ? width - 1 : lastAbove(colInk, colThreshold);
   if (top < 0 || bottom < 0 || left < 0 || right < 0 || bottom <= top || right <= left) return null;
-
-  // Only ever shave an appendage off. A large collapse means the component was
-  // not a rectangle to begin with — a WC, whose pan carries no full-length
-  // line — and its own bounding box is the better description.
-  if ((right - left + 1) < width * 0.55 || (bottom - top + 1) < height * 0.55) return null;
   if (top === 0 && left === 0 && bottom === height - 1 && right === width - 1) return null;
+
+  // Guard only against an absurd collapse; the result is offered alongside the
+  // raw box rather than replacing it, so a wrong trim costs nothing.
+  if ((right - left + 1) < width * 0.25 || (bottom - top + 1) < height * 0.25) return null;
 
   return {
     minX: box.minX + left, minY: box.minY + top,
@@ -487,19 +498,142 @@ function describeComponent(
   wallTolerance = 0,
 ): InkComponent {
   const raw = measureBox(labels, imgW, box.id, box, box.area, walls, wallTolerance);
+  const bounds = { minX: box.minX, minY: box.minY, maxX: box.maxX, maxY: box.maxY };
+  let rect: InkComponent["rect"] = null;
   if (!raw.closedRect) {
     const trimmed = trimToDrawnRectangle(labels, imgW, box.id, box, raw.onWall);
     if (trimmed) {
       const refined = measureBox(labels, imgW, box.id, trimmed, box.area, walls, wallTolerance);
-      // Adopt the trim only when it actually recovers a rectangle.
-      if (refined.closedRect) return { ...refined, ...trimmed };
+      // Only worth offering when the trim actually recovers a rectangle.
+      if (refined.closedRect) {
+        rect = {
+          ...trimmed,
+          width: refined.width,
+          height: refined.height,
+          interior: refined.interior,
+          closedRect: true,
+        };
+      }
     }
   }
-  return { ...raw, minX: box.minX, minY: box.minY, maxX: box.maxX, maxY: box.maxY };
+  return { ...raw, ...bounds, id: box.id, rect };
+}
+
+/**
+ * Recognise the star-shaped glyph that marks refrigeration.
+ *
+ * Danish plans mark a fridge or freezer with a snowflake inside its cabinet:
+ * a handful of strokes radiating from a common centre. Nothing else in a plan
+ * looks like that — a hollow symbol has an empty middle, and lettering has no
+ * radial structure — so three measurements identify it: ink where the strokes
+ * meet, a ring beyond the middle crossed only where the arms pass through, and
+ * a plausible number of arms.
+ */
+function looksLikeRadialGlyph(labels: Int32Array, imgW: number, imgH: number, c: InkComponent): boolean {
+  const cx = (c.minX + c.maxX) / 2;
+  const cy = (c.minY + c.maxY) / 2;
+  const half = Math.min(c.width, c.height) / 2;
+  if (half < 3) return false;
+  const has = (x: number, y: number) => {
+    const ix = Math.round(x);
+    const iy = Math.round(y);
+    if (ix < 0 || ix >= imgW || iy < 0 || iy >= imgH) return false;
+    return labels[iy * imgW + ix] === c.id;
+  };
+
+  // The arms meet in the middle, so unlike a hollow symbol the centre is inked.
+  const coreR = Math.max(1, Math.round(half * 0.25));
+  let coreHits = 0; let coreSamples = 0;
+  for (let dy = -coreR; dy <= coreR; dy += 1) {
+    for (let dx = -coreR; dx <= coreR; dx += 1) {
+      coreSamples += 1;
+      if (has(cx + dx, cy + dy)) coreHits += 1;
+    }
+  }
+  if (coreHits / Math.max(1, coreSamples) < 0.3) return false;
+
+  // Out at this radius only the arms are present, as separate short arcs.
+  const r = half * 0.78;
+  const samples = Math.max(24, Math.round(2 * Math.PI * r));
+  const onRing: boolean[] = [];
+  for (let i = 0; i < samples; i += 1) {
+    const theta = (2 * Math.PI * i) / samples;
+    onRing.push(has(cx + r * Math.cos(theta), cy + r * Math.sin(theta)));
+  }
+  const coverage = onRing.filter(Boolean).length / samples;
+  if (coverage < 0.05 || coverage > 0.55) return false;
+  let arms = 0;
+  for (let i = 0; i < samples; i += 1) {
+    if (onRing[i] && !onRing[(i - 1 + samples) % samples]) arms += 1;
+  }
+  return arms >= 3 && arms <= 10;
+}
+
+/**
+ * The cabinet cell a glyph sits in, found by walking out from its centre to the
+ * first linework that is not the glyph itself. An appliance is drawn inside its
+ * own cell of the run, so those hits are the cell's own sides.
+ */
+function enclosingCell(
+  labels: Int32Array,
+  imgW: number,
+  imgH: number,
+  glyph: InkComponent,
+  maxReach: number,
+  walls: DetectorWall[],
+): BoxBounds | null {
+  const cx = Math.round((glyph.minX + glyph.maxX) / 2);
+  const cy = Math.round((glyph.minY + glyph.maxY) / 2);
+  const inWall = (x: number, y: number) => walls.some((wall) => {
+    const half = wall.thickness / 2 + 1;
+    return x >= Math.min(wall.start[0], wall.end[0]) - half
+      && x <= Math.max(wall.start[0], wall.end[0]) + half
+      && y >= Math.min(wall.start[1], wall.end[1]) - half
+      && y <= Math.max(wall.start[1], wall.end[1]) + half;
+  });
+  const blocked = (x: number, y: number) => {
+    if (x < 0 || x >= imgW || y < 0 || y >= imgH) return true;
+    // Walls have been erased from the label map, so without this the walk runs
+    // straight through one and measures a cell that spans two rooms.
+    if (inWall(x, y)) return true;
+    const label = labels[y * imgW + x];
+    return label !== 0 && label !== glyph.id;
+  };
+  const walk = (dx: number, dy: number) => {
+    for (let step = 1; step <= maxReach; step += 1) {
+      if (blocked(cx + dx * step, cy + dy * step)) return step;
+    }
+    return -1;
+  };
+  const left = walk(-1, 0);
+  const right = walk(1, 0);
+  const up = walk(0, -1);
+  const down = walk(0, 1);
+  if (left < 0 || right < 0 || up < 0 || down < 0) return null;
+  return { minX: cx - left, maxX: cx + right, minY: cy - up, maxY: cy + down };
+}
+
+/**
+ * The box to classify a rectangular fixture from: the drawn rectangle when
+ * neighbouring linework stretched the component's own box, otherwise the box.
+ */
+function rectangleGeometry(c: InkComponent) {
+  if (!c.closedRect && c.rect) {
+    return {
+      minX: c.rect.minX, minY: c.rect.minY, maxX: c.rect.maxX, maxY: c.rect.maxY,
+      width: c.rect.width, height: c.rect.height,
+      interior: c.rect.interior, closedRect: true,
+    };
+  }
+  return {
+    minX: c.minX, minY: c.minY, maxX: c.maxX, maxY: c.maxY,
+    width: c.width, height: c.height,
+    interior: c.interior, closedRect: c.closedRect,
+  };
 }
 
 /** Shortest gap from a component's box to any wall band, in pixels. */
-function distanceToWall(c: InkComponent, walls: DetectorWall[]): number {
+function distanceToWall(c: BoxBounds, walls: DetectorWall[]): number {
   let best = Number.POSITIVE_INFINITY;
   for (const wall of walls) {
     const half = wall.thickness / 2;
@@ -706,9 +840,16 @@ const SIZE = {
   counterLength: [0.60, 3.60] as const,
   cupboardShort: [0.45, 1.10] as const,
   cupboardLong: [0.55, 2.60] as const,
+  /** A worktop carrying a basin — a vanity, a run, or an island. */
+  islandShort: [0.40, 1.60] as const,
+  islandLong: [0.60, 3.60] as const,
   sinkSide: [0.24, 0.85] as const,
   /** Pan radius of a WC bowl: a 0.36-0.40 m wide pan. */
   toiletBowlRadius: [0.13, 0.30] as const,
+  /** The drawn snowflake, not the appliance it marks. */
+  fridgeGlyph: [0.14, 0.60] as const,
+  /** The cabinet cell around it; a fridge is 0.55-0.70 m wide and deep. */
+  fridgeCell: [0.42, 1.15] as const,
 };
 
 const within = (v: number, [lo, hi]: readonly [number, number]) => v >= lo && v <= hi;
@@ -737,11 +878,33 @@ function detectComponentFixtures(
 
   const wallGap = wallThickness * 1.6;
   const results: DetectedFixture[] = [];
-  const counters: InkComponent[] = [];
+  /** Counter runs and cabinets, as hosts for the basins and appliances in them. */
+  const counters: Array<BoxBounds & { area: number }> = [];
   /** Shower candidates awaiting confirmation, mapped to whether they abut a wall. */
   const provisionalTrays = new Map<string, boolean>();
 
-  for (const c of described) {
+  // Basin outlines, found before anything is classified. Worktops are told from
+  // cabinetry by what sits in them rather than by proportion alone: a run with a
+  // basin let into it is a worktop whatever its shape, and an island is often
+  // close enough to square that no aspect threshold would separate the two.
+  const basins = described
+    .map((b) => ({ geometry: rectangleGeometry(b), area: b.area }))
+    .filter(({ geometry }) => {
+      const bw = geometry.width * metresPerPixel;
+      const bh = geometry.height * metresPerPixel;
+      return within(bw, SIZE.sinkSide) && within(bh, SIZE.sinkSide)
+        && geometry.interior <= 0.45 && geometry.closedRect;
+    });
+  const enclosesBasin = (box: BoxBounds, area: number) => basins.some(({ geometry: b, area: basinArea }) => (
+    b.minX >= box.minX - 2 && b.maxX <= box.maxX + 2
+    && b.minY >= box.minY - 2 && b.maxY <= box.maxY + 2
+    && basinArea < area
+  ));
+
+  for (const component of described) {
+    // Classify from the drawn rectangle where one was recovered, so a symbol
+    // that other linework runs into is still measured at its true size.
+    const c = rectangleGeometry(component);
     const wm = c.width * metresPerPixel;
     const hm = c.height * metresPerPixel;
     const longSide = Math.max(wm, hm);
@@ -778,47 +941,95 @@ function detectComponentFixtures(
       continue;
     }
 
-    // Vanity / kitchen run: a distinctly oblong shallow rectangle flush against
-    // a wall. Its interior may hold a basin outline, so a modest interior fill
-    // is allowed.
-    if (c.closedRect && touchesWall && aspect >= 1.8 && c.interior <= 0.34
-      && within(shortSide, SIZE.counterDepth) && within(longSide, SIZE.counterLength)) {
-      counters.push(c);
-      push("countertop", clamp(0.6 + Math.min(0.2, longSide * 0.06), 0.6, 0.84));
+    // Anything with a basin let into it is a worktop. An island is free of the
+    // wall along its length, a run is drawn against one.
+    const hasBasin = c.closedRect && c.interior <= 0.45 && enclosesBasin(c, component.area)
+      && within(shortSide, SIZE.islandShort) && within(longSide, SIZE.islandLong);
+    if (hasBasin) {
+      counters.push({ ...c, area: component.area });
+      const longSideOnWall = wm >= hm
+        ? (component.onWall.top || component.onWall.bottom)
+        : (component.onWall.left || component.onWall.right);
+      push(longSideOnWall ? "countertop" : "island", 0.72);
       continue;
     }
 
-    // Built-in storage: a closed, mostly empty box against a wall that is too
-    // chunky to be a counter run. Wardrobes and airing cupboards land here.
+    // Built-in storage: a closed, mostly empty box against a wall. Wardrobes,
+    // closet runs and airing cupboards land here. Tested before worktops
+    // because the two are the same shape at this level of evidence — a wardrobe
+    // and a kitchen run are both roughly 0.6 m deep against a wall — and the
+    // worktops that can actually be told apart were already taken above by the
+    // basin let into them.
     if (c.closedRect && touchesWall && c.interior <= 0.3
       && within(shortSide, SIZE.cupboardShort) && within(longSide, SIZE.cupboardLong)) {
-      counters.push(c);
+      counters.push({ ...c, area: component.area });
       push("cupboard", 0.62);
       continue;
     }
+
+    // A run too long to be a single cupboard, still shallow enough to be a
+    // worktop.
+    if (c.closedRect && touchesWall && aspect >= 1.8 && c.interior <= 0.34
+      && within(shortSide, SIZE.counterDepth) && within(longSide, SIZE.counterLength)) {
+      counters.push({ ...c, area: component.area });
+      push("countertop", clamp(0.6 + Math.min(0.2, longSide * 0.06), 0.6, 0.84));
+      continue;
+    }
+  }
+
+  // Refrigeration, from the snowflake drawn in the cabinet. The glyph gives the
+  // position; the cell around it gives the footprint, so the appliance is
+  // reported at its own size instead of being swallowed by the run it sits in.
+  for (const component of described) {
+    const gw = component.width * metresPerPixel;
+    const gh = component.height * metresPerPixel;
+    if (!within(gw, SIZE.fridgeGlyph) || !within(gh, SIZE.fridgeGlyph)) continue;
+    // The snowflake is drawn loose inside its cabinet. A component that carries
+    // its own closed outline is a different symbol — an X in a box marks other
+    // appliances and has four arms of its own.
+    if (component.closedRect) continue;
+    // Radial symmetry means a square box and thin arms. The X drawn in a box to
+    // mark other appliances is the near miss this rejects: it takes the box's
+    // proportions and is drawn heavier.
+    if (Math.max(gw, gh) / Math.max(0.01, Math.min(gw, gh)) > 1.2) continue;
+    if (component.fill > 0.42) continue;
+    if (!looksLikeRadialGlyph(labels, imgW, imgH, component)) continue;
+
+    const cell = enclosingCell(labels, imgW, imgH, component, Math.round(1.2 / metresPerPixel), walls);
+    const box = cell && within((cell.maxX - cell.minX) * metresPerPixel, SIZE.fridgeCell)
+      && within((cell.maxY - cell.minY) * metresPerPixel, SIZE.fridgeCell)
+      ? cell
+      : null;
+    if (!box) continue;
+    results.push({
+      id: `cc-fridge-${results.length + 1}`,
+      kind: "fridge",
+      x: (box.minX + box.maxX) / 2,
+      y: (box.minY + box.maxY) / 2,
+      width: box.maxX - box.minX,
+      height: box.maxY - box.minY,
+      rotation: 0,
+      confidence: 0.74,
+    });
   }
 
   // Toilets share this pass's labelling: the pan ring must fall inside one of
   // the small blobs found above.
   results.push(...detectToiletsByBowl(work, imgW, footprint, walls, metresPerPixel, described));
 
-  // Basins: a small rounded blob sitting inside a detected counter run.
-  for (const c of described) {
-    const wm = c.width * metresPerPixel;
-    const hm = c.height * metresPerPixel;
-    if (!within(wm, SIZE.sinkSide) || !within(hm, SIZE.sinkSide)) continue;
-    if (c.interior > 0.45) continue;
-    const host = counters.find((k) => c.minX >= k.minX - 2 && c.maxX <= k.maxX + 2
-      && c.minY >= k.minY - 2 && c.maxY <= k.maxY + 2
-      && c.area < k.area);
+  // Basins: emitted for the worktops and cabinets that actually enclose one.
+  for (const { geometry: b, area } of basins) {
+    const host = counters.find((k) => b.minX >= k.minX - 2 && b.maxX <= k.maxX + 2
+      && b.minY >= k.minY - 2 && b.maxY <= k.maxY + 2
+      && area < k.area);
     if (!host) continue;
     results.push({
       id: `cc-sink-${results.length + 1}`,
       kind: "sink",
-      x: (c.minX + c.maxX) / 2,
-      y: (c.minY + c.maxY) / 2,
-      width: c.width,
-      height: c.height,
+      x: (b.minX + b.maxX) / 2,
+      y: (b.minY + b.maxY) / 2,
+      width: b.width,
+      height: b.height,
       rotation: 0,
       confidence: 0.72,
     });

@@ -62,5 +62,13 @@ for (const [i, region] of regions.entries()) {
       `  ${wm.padStart(5)}x${hm.padStart(5)}m` +
       `  ${c.fill.toFixed(2)}  ${c.interior.toFixed(2)}      ${s4}  ${c.closedRect ? "YES" : "no"}`,
     );
+    if (c.rect) {
+      const rw = use ? (c.rect.width * use).toFixed(2) : "?";
+      const rh = use ? (c.rect.height * use).toFixed(2) : "?";
+      console.log(
+        `      -> trimmed rect (${c.rect.minX},${c.rect.minY})-(${c.rect.maxX},${c.rect.maxY})` +
+        `  ${c.rect.width}x${c.rect.height}  ${rw}x${rh} m  interior=${c.rect.interior.toFixed(2)}`,
+      );
+    }
   }
 }

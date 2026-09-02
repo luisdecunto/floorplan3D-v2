@@ -2425,11 +2425,16 @@ function detectFloorStructureAligned(
   // read as a grid of boxes) and wall corridors (their corners read as
   // bordered boxes) are the dominant false-positive sources, so both are
   // supplied as obstacles. Conservative — nothing is emitted when ambiguous.
+  // Pad by less than half a wall so the margin stays inside the wall band. The
+  // box has already been clamped to the walls flanking the shaft, so a wider
+  // margin reaches into the neighbouring room and suppresses the joinery drawn
+  // against the far side of that wall — a walk-in's shelving, typically.
+  const stairMargin = wallThickness * 0.4;
   const stairObstacles: FixtureObstacle[] = stairs.map((stair) => ({
-    minX: stair.x - wallThickness,
-    minY: stair.y - wallThickness,
-    maxX: stair.x + stair.width + wallThickness,
-    maxY: stair.y + stair.height + wallThickness,
+    minX: stair.x - stairMargin,
+    minY: stair.y - stairMargin,
+    maxX: stair.x + stair.width + stairMargin,
+    maxY: stair.y + stair.height + stairMargin,
   }));
   // Walls are not supplied as obstacles: the component detector erases them
   // from its own working mask, and wall-adjacent fixtures — which is most of

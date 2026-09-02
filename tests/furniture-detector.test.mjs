@@ -50,9 +50,11 @@ function syntheticBathroom({ showerDoorSwing = false } = {}) {
       set(26 + t, 75 + Math.round(t * 0.55));
     }
   }
-  // 2.40 x 0.60 m counter run along the left wall, with a 0.80 x 0.40 m basin.
-  outline(25, 180, 145, 210);
-  outline(100, 185, 140, 205);
+  // 2.40 x 0.70 m counter run along the bottom wall, with a 0.80 x 0.50 m basin
+  // let into it. Run lengthways against the wall, which is what makes it a
+  // counter rather than an island.
+  outline(25, 198, 145, 232);
+  outline(100, 203, 140, 227);
   // WC: cistern against the top wall with a 0.40 m pan hanging off it.
   outline(158, 25, 182, 38);
   ring(170, 48, 10);
@@ -115,6 +117,78 @@ test("a toilet is placed from its pan and reaches back to the wall", () => {
   assert.ok(across >= 0.3 && across <= 0.7, `width ${across}`);
   // The pan sits below the cistern, so the box must span back up to the wall.
   assert.ok(toilet.y - toilet.height / 2 <= 30, "box reaches the wall face");
+});
+
+/**
+ * A kitchen: a run of cabinets across the top wall with a snowflake marking the
+ * refrigerated cell, and a free-standing island carrying a basin.
+ */
+function syntheticKitchen() {
+  const mask = new Uint8Array(WIDTH * HEIGHT);
+  const set = (x, y) => {
+    if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) mask[y * WIDTH + x] = 1;
+  };
+  const filled = (x1, y1, x2, y2) => {
+    for (let y = y1; y <= y2; y += 1) for (let x = x1; x <= x2; x += 1) set(x, y);
+  };
+  const outline = (x1, y1, x2, y2) => {
+    for (let x = x1; x <= x2; x += 1) { set(x, y1); set(x, y2); }
+    for (let y = y1; y <= y2; y += 1) { set(x1, y); set(x2, y); }
+  };
+  const line = (x1, y1, x2, y2) => {
+    const steps = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+    for (let i = 0; i <= steps; i += 1) {
+      set(Math.round(x1 + ((x2 - x1) * i) / steps), Math.round(y1 + ((y2 - y1) * i) / steps));
+    }
+  };
+
+  filled(16, 16, 284, 24);
+  filled(16, 236, 284, 244);
+  filled(16, 16, 24, 244);
+  filled(276, 16, 284, 244);
+
+  // Cabinet run across the top wall, divided into cells.
+  outline(25, 25, 225, 57);
+  line(60, 25, 60, 57);
+  line(95, 25, 95, 57);
+  // Snowflake in the second cell: eight arms from a common centre.
+  const cx = 77; const cy = 41; const r = 9;
+  for (let i = 0; i < 8; i += 1) {
+    const theta = (Math.PI * i) / 4;
+    line(cx, cy, Math.round(cx + r * Math.cos(theta)), Math.round(cy + r * Math.sin(theta)));
+  }
+  // Free-standing island with a basin, clear of every wall.
+  outline(90, 130, 210, 190);
+  outline(135, 145, 175, 175);
+
+  const walls = [
+    { axis: "horizontal", start: [16, 20], end: [284, 20], thickness: WALL_THICKNESS },
+    { axis: "horizontal", start: [16, 240], end: [284, 240], thickness: WALL_THICKNESS },
+    { axis: "vertical", start: [20, 16], end: [20, 244], thickness: WALL_THICKNESS },
+    { axis: "vertical", start: [280, 16], end: [280, 244], thickness: WALL_THICKNESS },
+  ];
+  return { mask, walls, footprint: { minX: 16, minY: 16, maxX: 284, maxY: 244 } };
+}
+
+function detectKitchen() {
+  const { mask, walls, footprint } = syntheticKitchen();
+  return detectFurniture(mask, WIDTH, footprint, WALL_THICKNESS, [], 24, walls, METRES_PER_PIXEL);
+}
+
+test("a snowflake marks refrigeration, sized to the cabinet cell holding it", () => {
+  const fridge = detectKitchen().find((f) => f.kind === "fridge");
+  assert.ok(fridge, "expected a fridge");
+  // The cell is 35 px wide between its dividers, not the width of the glyph.
+  assert.ok(metres(fridge.width) >= 0.5 && metres(fridge.width) <= 0.9, `width ${metres(fridge.width)}`);
+  assert.ok(Math.abs(fridge.x - 77) <= 6, `centred on the cell, got x=${fridge.x}`);
+});
+
+test("a worktop clear of the walls is an island, not a counter run", () => {
+  const fixtures = detectKitchen();
+  const island = fixtures.find((f) => f.kind === "island");
+  assert.ok(island, `expected an island, got ${fixtures.map((f) => f.kind).join()}`);
+  assert.ok(metres(island.width) > 2 && metres(island.height) > 1);
+  assert.ok(fixtures.some((f) => f.kind === "sink"), "the basin in it is still reported");
 });
 
 test("nothing is emitted without a project scale", () => {
