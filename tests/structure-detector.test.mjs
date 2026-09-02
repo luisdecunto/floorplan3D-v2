@@ -254,7 +254,7 @@ test("a straight flight is left as one rectangle", () => {
   assert.equal(split.flight, undefined);
 });
 
-test("a turned stair climbs and then sweeps sideways onto the floor above", () => {
+test("a winding stair doubles back around its newel, one leg short", () => {
   const slab = { x: 0, z: 0, width: 9, depth: 8 };
   const stair = {
     id: "s", x: 0.05, z: -2.2, width: 2.18, depth: 2.5,
@@ -280,10 +280,18 @@ test("a turned stair climbs and then sweeps sideways onto the floor above", () =
   ];
   const dot = (run[0] * sweep[0] + run[1] * sweep[1])
     / (Math.hypot(...run) * Math.hypot(...sweep));
-  // A quarter turn, not the half turn that doubles back over its own flight.
-  assert.ok(Math.abs(dot) < 0.2, `run and sweep should be perpendicular, cosine ${dot.toFixed(2)}`);
-  // The two meet, so the stair is continuous.
-  assert.deepEqual(connection.upperFlight.start, connection.lowerFlight.end);
+  // The winders sweep a half turn, so the second leg heads back the way the
+  // first came rather than leaving at a right angle.
+  assert.ok(dot < -0.8, `legs should double back, cosine ${dot.toFixed(2)}`);
+  // Side by side, not on top of one another.
+  const apart = Math.abs(connection.lowerFlight.start[0] - connection.upperFlight.start[0]);
+  assert.ok(apart > connection.width * 0.6, `legs should sit either side of the newel, ${apart.toFixed(2)} m apart`);
+  // One leg is materially shorter, which is what a winder gives you.
+  const longLeg = Math.hypot(...run);
+  const shortLeg = Math.hypot(...sweep);
+  assert.ok(longLeg > shortLeg * 1.3, `long ${longLeg.toFixed(2)} vs short ${shortLeg.toFixed(2)}`);
+  // The two meet at the turn, so the stair is continuous.
+  assert.equal(connection.lowerFlight.end[1].toFixed(3), connection.upperFlight.start[1].toFixed(3));
   // And it climbs the whole way at a normal riser.
   const steps = connection.lowerFlight.stepCount + connection.upperFlight.stepCount;
   const riser = (connection.upperFlight.toElevation - connection.lowerFlight.fromElevation) / steps;

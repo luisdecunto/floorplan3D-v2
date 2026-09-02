@@ -144,20 +144,18 @@ function stairEnds(stair: Stair) {
 }
 
 /**
- * A straight flight that turns through ninety degrees onto the floor above.
+ * A flight that winds back on itself around a newel.
  *
- * The half-turn built below sends two flights up side by side with a landing
- * between them, which is a different staircase: it arrives back above where it
- * started. A winder carries on past the turn, so its flight and its sweep run
- * at right angles and it arrives to one side. Modelling one as the other put
- * the steps across open floor and left the arrival in the wrong place.
- *
- * The turn is expressed in the same three pieces the half-turn uses — a run, a
- * corner, a second run — so it renders through the same path; only their
- * arrangement differs, the second run leaving the corner sideways rather than
- * doubling back.
+ * The winder treads sweep a half turn, not a quarter: the long flight arrives,
+ * the treads wrap right around the post, and the stair leaves heading back the
+ * way it came on the other side of it — the two legs parallel, one much shorter
+ * than the other. The half-turn built below has that topology but places its
+ * legs from the shaft's own proportions, which puts them symmetrically. Taking
+ * them from the winder and the flight instead gives the legs the plan actually
+ * shows: the long one on the flight's line, the short one across the part of
+ * the winder the flight does not cover.
  */
-function quarterTurnConnection(
+function windingTurnConnection(
   lowerLevelId: string,
   upperLevelId: string,
   lowerStair: Stair,
@@ -174,20 +172,32 @@ function quarterTurnConnection(
   const flightRunHalf = (vertical ? flight.depth : flight.width) / 2;
   const winderRunHalf = (vertical ? winder.depth : winder.width) / 2;
   const towardsWinder = Math.sign(winderRunCenter - flightRunCenter) || -1;
-  // Across it: the winder reaches past the flight on the side it turns towards.
+
+  // Across it: the two legs sit either side of the newel. The long one is on
+  // the flight's line; the short one runs back down the strip of the winder the
+  // flight leaves clear, which is the side the treads wind towards.
   const flightCross = vertical ? flight.x : flight.z;
+  const flightCrossHalf = (vertical ? flight.width : flight.depth) / 2;
   const winderCross = vertical ? winder.x : winder.z;
   const winderCrossHalf = (vertical ? winder.width : winder.depth) / 2;
-  const width = Math.max(0.6, Math.min(vertical ? flight.width : flight.depth, winderRunHalf * 2));
+  const winderLow = winderCross - winderCrossHalf;
+  const winderHigh = winderCross + winderCrossHalf;
+  const flightLow = flightCross - flightCrossHalf;
+  const flightHigh = flightCross + flightCrossHalf;
+  const lowGap = flightLow - winderLow;
+  const highGap = winderHigh - flightHigh;
+  const returnsLow = lowGap >= highGap;
+  const gap = Math.max(lowGap, highGap);
+  if (gap < 0.35) return null;
+  const width = Math.max(0.55, Math.min(flightCrossHalf * 2, gap));
+  const shortCross = returnsLow ? winderLow + width / 2 : winderHigh - width / 2;
 
-  const turnDirection = Math.sign(winderCross - flightCross) || -1;
-  const crossReach = winderCross + turnDirection * (winderCrossHalf - width / 2);
-  if (Math.abs(crossReach - flightCross) < width * 0.4) return null;
-
+  // The turn is at the far edge of the winder; both legs meet there.
+  const turnPoint = winderRunCenter + towardsWinder * winderRunHalf;
   const foot = flightRunCenter - towardsWinder * flightRunHalf;
-  const corner = winderRunCenter;
-  const runLength = Math.abs(corner - foot);
-  const sweepLength = Math.abs(crossReach - flightCross);
+  const shortEnd = winderRunCenter - towardsWinder * winderRunHalf;
+  const runLength = Math.abs(turnPoint - foot);
+  const sweepLength = Math.abs(shortEnd - turnPoint);
   if (runLength < 0.4 || sweepLength < 0.3) return null;
 
   // How many steps there are follows from the height climbed, at a normal
@@ -213,23 +223,24 @@ function quarterTurnConnection(
     width,
     lowerFlight: {
       start: point(foot, flightCross),
-      end: point(corner, flightCross),
+      end: point(turnPoint, flightCross),
       fromElevation,
       toElevation: cornerElevation,
       stepCount: flightSteps,
     },
     upperFlight: {
-      start: point(corner, flightCross),
-      end: point(corner, crossReach),
+      start: point(turnPoint, shortCross),
+      end: point(shortEnd, shortCross),
       fromElevation: cornerElevation,
       toElevation,
       stepCount: sweepSteps,
     },
+    // The winders themselves, bridging the two legs around the newel.
     landing: {
-      x: vertical ? flightCross : corner,
-      z: vertical ? corner : flightCross,
-      width: vertical ? width : width,
-      depth: width,
+      x: vertical ? (flightCross + shortCross) / 2 : turnPoint,
+      z: vertical ? turnPoint : (flightCross + shortCross) / 2,
+      width: vertical ? Math.abs(flightCross - shortCross) + width : width,
+      depth: vertical ? width : Math.abs(flightCross - shortCross) + width,
       elevation: cornerElevation,
     },
   };
@@ -271,7 +282,7 @@ export function buildStairConnections(levels: Level[], explodeDistance = 0): Sta
         ? { winder: pair.lowerStair.winder, flight: pair.lowerStair.flight }
         : null);
     if (turn) {
-      const quarter = quarterTurnConnection(
+      const winding = windingTurnConnection(
         lower.level.id,
         upper.level.id,
         pair.lowerStair,
@@ -279,9 +290,8 @@ export function buildStairConnections(levels: Level[], explodeDistance = 0): Sta
         opening,
         fromElevation,
         toElevation,
-        pair.lowerStair.stepCount + pair.upperStair.stepCount,
       );
-      if (quarter) { connections.push(quarter); continue; }
+      if (winding) { connections.push(winding); continue; }
     }
 
     const landingElevation = (fromElevation + toElevation) / 2;
