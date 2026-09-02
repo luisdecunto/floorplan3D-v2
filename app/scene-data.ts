@@ -86,6 +86,13 @@ export type Fixture = {
   /** Rotation around Y axis in radians (0 = no rotation). */
   rotation: number;
   confidence: number;
+  /**
+   * Which way the fixture opens, given as the side of its box that faces into
+   * the room — the side opposite the wall it backs onto. Doors, handles and
+   * glazing go here. Absent when the piece stands clear of every wall, or when
+   * two opposite sides are both against one.
+   */
+  front?: "north" | "south" | "east" | "west";
 };
 
 export type Level = {

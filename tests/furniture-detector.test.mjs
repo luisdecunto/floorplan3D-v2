@@ -242,6 +242,51 @@ test("a worktop clear of the walls is an island, not a counter run", () => {
   assert.ok(fixtures.some((f) => f.kind === "sink"), "the basin in it is still reported");
 });
 
+test("joinery faces away from the wall it backs onto", () => {
+  const { mask, walls, footprint } = syntheticBathroom();
+  const fixtures = detectFurniture(mask, WIDTH, footprint, WALL_THICKNESS, [], 24, walls, METRES_PER_PIXEL);
+  // The counter run lies along the bottom wall, so it opens northwards, into
+  // the room. Without this the doors are put on a face nobody can reach.
+  const counter = fixtures.find((f) => f.kind === "countertop");
+  assert.ok(counter, "expected a counter run");
+  assert.equal(counter.front, "north");
+});
+
+test("a run along a wall opens through its long side", () => {
+  // A closet run is far longer than it is deep, and its doors are on the long
+  // face. Deriving that from the backing wall is what stops them being put on
+  // the narrow end.
+  const mask = new Uint8Array(WIDTH * HEIGHT);
+  const set = (x, y) => { if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) mask[y * WIDTH + x] = 1; };
+  const filled = (x1, y1, x2, y2) => {
+    for (let y = y1; y <= y2; y += 1) for (let x = x1; x <= x2; x += 1) set(x, y);
+  };
+  const outline = (x1, y1, x2, y2) => {
+    for (let x = x1; x <= x2; x += 1) { set(x, y1); set(x, y2); }
+    for (let y = y1; y <= y2; y += 1) { set(x1, y); set(x2, y); }
+  };
+  filled(16, 16, 284, 24);
+  filled(16, 236, 284, 244);
+  filled(16, 16, 24, 244);
+  filled(276, 16, 284, 244);
+  // 0.7 m deep, 3.0 m long, against the left wall.
+  outline(25, 60, 60, 210);
+
+  const walls = [
+    { axis: "horizontal", start: [16, 20], end: [284, 20], thickness: WALL_THICKNESS },
+    { axis: "horizontal", start: [16, 240], end: [284, 240], thickness: WALL_THICKNESS },
+    { axis: "vertical", start: [20, 16], end: [20, 244], thickness: WALL_THICKNESS },
+    { axis: "vertical", start: [280, 16], end: [280, 244], thickness: WALL_THICKNESS },
+  ];
+  const fixtures = detectFurniture(mask, WIDTH, { minX: 16, minY: 16, maxX: 284, maxY: 244 },
+    WALL_THICKNESS, [], 24, walls, METRES_PER_PIXEL);
+  const run = fixtures.find((f) => f.kind === "cupboard" || f.kind === "countertop");
+  assert.ok(run, `expected a run, got ${fixtures.map((f) => f.kind).join()}`);
+  assert.ok(run.height > run.width, "the run should be longer than it is deep");
+  // Backed by the left wall, so it opens east — across its long face.
+  assert.equal(run.front, "east");
+});
+
 test("nothing is emitted without a project scale", () => {
   const { mask, walls, footprint } = syntheticBathroom();
   const fixtures = detectFurniture(mask, WIDTH, footprint, WALL_THICKNESS, [], 24, walls, undefined);

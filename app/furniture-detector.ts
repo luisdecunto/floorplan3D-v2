@@ -16,6 +16,11 @@ export type DetectedFixture = {
   height: number;
   rotation: number;
   confidence: number;
+  /**
+   * The side of the box facing into the room, opposite the wall the piece
+   * backs onto. Joinery is drawn from this: doors go on the face you can reach.
+   */
+  front?: "north" | "south" | "east" | "west";
 };
 
 type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
@@ -1028,6 +1033,15 @@ function detectComponentFixtures(
     const shortSide = Math.min(wm, hm);
     const aspect = longSide / Math.max(0.01, shortSide);
     const touchesWall = distanceToWall(c, walls) <= wallGap;
+    // The reachable face is the one opposite the wall behind the piece. With
+    // walls on opposite sides — an alcove — neither is the front, and with none
+    // there is nothing to work from.
+    const backing = component.onWall;
+    const front: DetectedFixture["front"] | undefined = backing.top && !backing.bottom ? "south"
+      : backing.bottom && !backing.top ? "north"
+        : backing.left && !backing.right ? "east"
+          : backing.right && !backing.left ? "west"
+            : undefined;
     const push = (kind: DetectedFixture["kind"], confidence: number) => {
       results.push({
         id: `cc-${results.length + 1}`,
@@ -1037,6 +1051,7 @@ function detectComponentFixtures(
         width: c.width,
         height: c.height,
         rotation: 0,
+        ...(front ? { front } : {}),
         confidence,
       });
     };
@@ -1173,6 +1188,7 @@ function detectComponentFixtures(
     // the nearest wall in any direction instead reaches sideways to whatever
     // happens to be closest — here the wall beside the stair, which is across
     // the front of the fridge, not behind it.
+    let front: DetectedFixture["front"] | undefined;
     const cx = (box.minX + box.maxX) / 2;
     const cy = (box.minY + box.maxY) / 2;
     const host = counters.find((k) => cx >= k.minX - 2 && cx <= k.maxX + 2
@@ -1208,15 +1224,16 @@ function detectComponentFixtures(
           else { box.minX += gap; box.maxX += gap; }
         };
         if (alongX) {
-          if (band.maxY <= box.minY) shift(band.maxY - box.minY);
-          else if (band.minY >= box.maxY) shift(band.minY - box.maxY);
-        } else if (band.maxX <= box.minX) shift(band.maxX - box.minX);
-        else if (band.minX >= box.maxX) shift(band.minX - box.maxX);
+          if (band.maxY <= box.minY) { shift(band.maxY - box.minY); front = "south"; }
+          else if (band.minY >= box.maxY) { shift(band.minY - box.maxY); front = "north"; }
+        } else if (band.maxX <= box.minX) { shift(band.maxX - box.minX); front = "east"; }
+        else if (band.minX >= box.maxX) { shift(band.minX - box.maxX); front = "west"; }
       }
     }
     results.push({
       id: `cc-fridge-${results.length + 1}`,
       kind: "fridge",
+      ...(front ? { front } : {}),
       x: (box.minX + box.maxX) / 2,
       y: (box.minY + box.maxY) / 2,
       width: box.maxX - box.minX,

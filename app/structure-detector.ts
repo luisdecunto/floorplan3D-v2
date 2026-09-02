@@ -3086,6 +3086,7 @@ export function structureToLevel(
     depth: f.height * pixelsToMetres,
     rotation: f.rotation,
     confidence: f.confidence,
+    ...(f.front ? { front: f.front } : {}),
   }));
 
   return {

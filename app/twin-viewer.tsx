@@ -672,6 +672,31 @@ const CUPBOARD_HEIGHT = 1.8;
 /** Thickness of the worktop slab laid over a carcass. */
 const SLAB = 0.04;
 
+/**
+ * Where the openable face of a cabinet is.
+ *
+ * Doors are on the long side of a carcass — a wardrobe two metres long does not
+ * open through its 0.6 m end — and on whichever end of that side is clear of a
+ * wall. Where the plan gives no backing wall, the near side is used, which is
+ * at worst the side a viewer is less likely to be looking at.
+ */
+function cabinetFace(fixture: Fixture, width: number, depth: number) {
+  const alongX = width >= depth;
+  const offset = (alongX ? depth : width) / 2 + 0.004;
+  const towards = fixture.front === "north" ? -1 : fixture.front === "south" ? 1
+    : fixture.front === "west" ? -1 : fixture.front === "east" ? 1 : 1;
+  // A front across the run's length says nothing about which long face opens,
+  // so fall back to the near side there.
+  const usable = alongX
+    ? (fixture.front === "north" || fixture.front === "south")
+    : (fixture.front === "east" || fixture.front === "west");
+  const sign = usable ? towards : 1;
+  const position: [number, number, number] = alongX
+    ? [0, 0, sign * offset]
+    : [sign * offset, 0, 0];
+  return { alongX, position };
+}
+
 function FurnitureModel({ fixture, elevation }: { fixture: Fixture; elevation: number }) {
   const y = elevation + 0.06; // sit on the floor slab
   const { x, z, width, depth, rotation } = fixture;
@@ -763,19 +788,45 @@ function FurnitureModel({ fixture, elevation }: { fixture: Fixture; elevation: n
         </mesh>
       </group>
     );
-    case "shower": return (
-      <group position={[x, y, z]} rotation={[0, rotation, 0]}>
-        <mesh position={[0, 0.04, 0]} castShadow receiveShadow>
-          <boxGeometry args={[width, 0.08, depth]} />
-          <meshStandardMaterial color="#d0e8ec" roughness={0.3} metalness={0.05} />
-        </mesh>
-        {/* Translucent screen on one side */}
-        <mesh position={[0, 0.9, -depth / 2]}>
-          <boxGeometry args={[width, 1.8, 0.02]} />
-          <meshStandardMaterial color="#a0cccc" transparent opacity={0.35} depthWrite={false} />
-        </mesh>
-      </group>
-    );
+    // A glazed enclosure, not a tray with one panel beside it: the screens run
+    // the full height of the joinery around them and close all four sides. The
+    // two against walls are hidden by those walls, so they cost nothing and
+    // save having to know which two they are.
+    case "shower": {
+      const glass = CUPBOARD_HEIGHT;
+      const pane = 0.018;
+      return (
+        <group position={[x, y, z]} rotation={[0, rotation, 0]}>
+          <mesh position={[0, 0.04, 0]} castShadow receiveShadow>
+            <boxGeometry args={[width, 0.08, depth]} />
+            <meshStandardMaterial color="#d0e8ec" roughness={0.3} metalness={0.05} />
+          </mesh>
+          {([
+            ["back", [0, glass / 2 + 0.08, -depth / 2], [width, glass, pane]],
+            ["front", [0, glass / 2 + 0.08, depth / 2], [width, glass, pane]],
+            ["left", [-width / 2, glass / 2 + 0.08, 0], [pane, glass, depth]],
+            ["right", [width / 2, glass / 2 + 0.08, 0], [pane, glass, depth]],
+          ] as const).map(([key, position, size]) => (
+            <mesh key={key} position={position as [number, number, number]}>
+              <boxGeometry args={size as [number, number, number]} />
+              <meshStandardMaterial
+                color="#a8ced6"
+                roughness={0.08}
+                metalness={0.02}
+                transparent
+                opacity={0.24}
+                depthWrite={false}
+              />
+            </mesh>
+          ))}
+          {/* Rail capping the glazing, which is what makes it read as an enclosure */}
+          <mesh position={[0, glass + 0.08, 0]}>
+            <boxGeometry args={[width + 0.02, 0.03, depth + 0.02]} />
+            <meshStandardMaterial color="#b7bcc0" metalness={0.6} roughness={0.35} />
+          </mesh>
+        </group>
+      );
+    }
     case "bathtub": return (
       <group position={[x, y, z]} rotation={[0, rotation, 0]}>
         <mesh castShadow receiveShadow>
@@ -801,19 +852,24 @@ function FurnitureModel({ fixture, elevation }: { fixture: Fixture; elevation: n
         </mesh>
       </group>
     );
-    case "cupboard": return (
-      <group position={[x, y + CUPBOARD_HEIGHT / 2, z]} rotation={[0, rotation, 0]}>
-        <mesh castShadow receiveShadow>
-          <boxGeometry args={[width, CUPBOARD_HEIGHT, depth]} />
-          <meshStandardMaterial color="#c4b89a" roughness={0.65} />
-        </mesh>
-        {/* Door split down the long face, so it reads as joinery from across a room */}
-        <mesh position={[0, 0, depth / 2 + 0.004]}>
-          <boxGeometry args={[0.012, CUPBOARD_HEIGHT * 0.94, 0.008]} />
-          <meshStandardMaterial color="#9d9376" roughness={0.7} />
-        </mesh>
-      </group>
-    );
+    case "cupboard": {
+      // Doors go on the face you can actually reach: the long side of the
+      // carcass, on whichever end of it is not against a wall.
+      const face = cabinetFace(fixture, width, depth);
+      return (
+        <group position={[x, y + CUPBOARD_HEIGHT / 2, z]} rotation={[0, rotation, 0]}>
+          <mesh castShadow receiveShadow>
+            <boxGeometry args={[width, CUPBOARD_HEIGHT, depth]} />
+            <meshStandardMaterial color="#c4b89a" roughness={0.65} />
+          </mesh>
+          {/* Split between door leaves, so it reads as joinery across a room */}
+          <mesh position={face.position}>
+            <boxGeometry args={face.alongX ? [0.012, CUPBOARD_HEIGHT * 0.94, 0.008] : [0.008, CUPBOARD_HEIGHT * 0.94, 0.012]} />
+            <meshStandardMaterial color="#9d9376" roughness={0.7} />
+          </mesh>
+        </group>
+      );
+    }
     // Carcass plus slab add up to exactly WORKTOP_HEIGHT, so a basin placed at
     // that height meets the surface it is let into.
     case "countertop": return (
