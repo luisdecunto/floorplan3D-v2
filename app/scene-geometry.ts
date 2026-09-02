@@ -160,7 +160,7 @@ function windingTurnConnection(
   upperLevelId: string,
   lowerStair: Stair,
   turn: { winder: NonNullable<Stair["winder"]>; flight: NonNullable<Stair["flight"]> },
-  opening: StairwellOpening,
+  upperLevel: Level,
   fromElevation: number,
   toElevation: number,
 ): StairConnection | null {
@@ -215,6 +215,42 @@ function windingTurnConnection(
   const point = (along: number, across: number): [number, number] => (
     vertical ? [across, along] : [along, across]
   );
+
+  // The void only has to clear the part of the climb that comes within
+  // headroom of the floor above. Lower down, the slab passes over the flight,
+  // which is what a stair running beneath an upper floor looks like — and is
+  // why the void does not need to be the whole shaft.
+  const HEADROOM = 2;
+  const clearAbove = toElevation - HEADROOM;
+  let longClear = turnPoint;
+  if (fromElevation < clearAbove && cornerElevation > fromElevation) {
+    const reached = (clearAbove - fromElevation) / (cornerElevation - fromElevation);
+    longClear = foot + clamp(reached, 0, 1) * (turnPoint - foot);
+  }
+  const runLo = Math.min(turnPoint, shortEnd, longClear);
+  const runHi = Math.max(turnPoint, shortEnd, longClear);
+  const crossLo = Math.min(flightCross, shortCross) - width / 2;
+  const crossHi = Math.max(flightCross, shortCross) + width / 2;
+  const margin = 0.1;
+  const openWidth = (vertical ? crossHi - crossLo : runHi - runLo) + margin;
+  const openDepth = (vertical ? runHi - runLo : crossHi - crossLo) + margin;
+  const halfSlabWidth = upperLevel.slab.width / 2;
+  const halfSlabDepth = upperLevel.slab.depth / 2;
+  const opening: StairwellOpening = {
+    x: clamp(
+      vertical ? (crossLo + crossHi) / 2 : (runLo + runHi) / 2,
+      upperLevel.slab.x - halfSlabWidth + openWidth / 2 + 0.08,
+      upperLevel.slab.x + halfSlabWidth - openWidth / 2 - 0.08,
+    ),
+    z: clamp(
+      vertical ? (runLo + runHi) / 2 : (crossLo + crossHi) / 2,
+      upperLevel.slab.z - halfSlabDepth + openDepth / 2 + 0.08,
+      upperLevel.slab.z + halfSlabDepth - openDepth / 2 - 0.08,
+    ),
+    width: openWidth,
+    depth: openDepth,
+  };
+
   return {
     id: `${lowerLevelId}-to-${upperLevelId}`,
     lowerLevelId,
@@ -287,7 +323,7 @@ export function buildStairConnections(levels: Level[], explodeDistance = 0): Sta
         upper.level.id,
         pair.lowerStair,
         turn,
-        opening,
+        upper.level,
         fromElevation,
         toElevation,
       );

@@ -298,6 +298,41 @@ test("a winding stair doubles back around its newel, one leg short", () => {
   assert.ok(riser > 0.14 && riser < 0.21, `riser ${riser.toFixed(3)} should be a normal step height`);
 });
 
+test("the floor above a winding stair only opens where headroom needs it", () => {
+  const slab = { x: 0, z: 0, width: 9, depth: 8 };
+  const stair = {
+    id: "s", x: 0.05, z: -2.2, width: 2.18, depth: 2.5,
+    runAxis: "vertical", stepCount: 14, confidence: 0.8,
+    flight: { x: 0.6, z: -1.7, width: 1.1, depth: 1.5 },
+    winder: { x: 0.05, z: -2.9, width: 2.18, depth: 1.1 },
+  };
+  const levels = [
+    { id: "lower", name: "Ground", elevation: 0, height: 2.7, slab, walls: [], stairs: [stair] },
+    { id: "upper", name: "First", elevation: 3, height: 2.7, slab, walls: [], stairs: [stair] },
+  ];
+  const [connection] = buildStairConnections(levels);
+  assert.ok(connection, "expected a connection");
+  const whole = stairwellOpening(levels[1]);
+  const opening = connection.opening;
+  // The slab can pass over the lower part of the flight, so the void is
+  // smaller than one cut for the whole shaft.
+  assert.ok(opening.width * opening.depth < whole.width * whole.depth * 0.85,
+    `void ${(opening.width * opening.depth).toFixed(2)} should be well under the shaft's ${(whole.width * whole.depth).toFixed(2)}`);
+  // But it still clears the arrival: the short leg must be inside it.
+  const arrival = connection.upperFlight.end;
+  assert.ok(Math.abs(arrival[0] - opening.x) <= opening.width / 2 + 0.01
+    && Math.abs(arrival[1] - opening.z) <= opening.depth / 2 + 0.01,
+    "the point you step onto the floor must be inside the void");
+  // And where the slab does pass over the flight, there is headroom under it.
+  const flight = connection.lowerFlight;
+  const coverAt = opening.z + opening.depth / 2;
+  const along = (coverAt - flight.start[1]) / (flight.end[1] - flight.start[1]);
+  const heightThere = flight.fromElevation
+    + Math.max(0, Math.min(1, along)) * (flight.toElevation - flight.fromElevation);
+  assert.ok(connection.upperFlight.toElevation - heightThere >= 1.95,
+    `only ${(connection.upperFlight.toElevation - heightThere).toFixed(2)} m under the slab edge`);
+});
+
 test("a straight stair still builds a half turn with a landing", () => {
   const slab = { x: 0, z: 0, width: 9, depth: 8 };
   const stair = { id: "s", x: 0, z: -2, width: 2, depth: 2.6, runAxis: "vertical", stepCount: 14, confidence: 0.8 };
