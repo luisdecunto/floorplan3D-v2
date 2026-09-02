@@ -206,6 +206,34 @@ test("a stacked cabinet run yields the worktop band, not its full depth", () => 
   assert.ok(counter.y - counter.height / 2 >= 35, "measured from the base units, not the wall");
 });
 
+test("a fridge stands against the wall behind its run", () => {
+  const fridge = detectKitchen().find((f) => f.kind === "fridge");
+  assert.ok(fridge, "expected a fridge");
+  // The wall's inner face is at y = 24. The cell is bounded by the worktop's
+  // own lines and starts further forward, so the appliance has to be carried
+  // back to the wall.
+  assert.ok(Math.abs((fridge.y - fridge.height / 2) - 24) <= 3,
+    `back edge should meet the wall, got ${(fridge.y - fridge.height / 2).toFixed(1)}`);
+  // Carried back, not stretched: it keeps an appliance's depth.
+  assert.ok(metres(fridge.height) >= 0.5 && metres(fridge.height) <= 0.85,
+    `depth ${metres(fridge.height)} should stay appliance-sized`);
+});
+
+test("a worktop stops at the appliance standing in its run", () => {
+  const fixtures = detectKitchen();
+  const counter = fixtures.find((f) => f.kind === "countertop");
+  const fridge = fixtures.find((f) => f.kind === "fridge");
+  assert.ok(counter && fridge, "expected both a counter run and a fridge");
+  const counterLeft = counter.x - counter.width / 2;
+  const counterRight = counter.x + counter.width / 2;
+  const fridgeLeft = fridge.x - fridge.width / 2;
+  const fridgeRight = fridge.x + fridge.width / 2;
+  const overlap = Math.min(counterRight, fridgeRight) - Math.max(counterLeft, fridgeLeft);
+  assert.ok(overlap <= 1, `worktop should not run through the fridge, overlap ${overlap.toFixed(1)}px`);
+  // And what is left is still a usable run rather than a sliver.
+  assert.ok(metres(counter.width) > 1.2, `remaining run ${metres(counter.width)} m`);
+});
+
 test("a worktop clear of the walls is an island, not a counter run", () => {
   const fixtures = detectKitchen();
   const island = fixtures.find((f) => f.kind === "island");

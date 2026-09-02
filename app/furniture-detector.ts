@@ -1164,6 +1164,56 @@ function detectComponentFixtures(
       ? cell
       : null;
     if (!box) continue;
+    // The cell is bounded by the worktop's own lines, so it starts where the
+    // base units do. A fridge is a tall unit standing against the wall, with
+    // nothing behind it, so carry the box back to the wall face.
+    //
+    // Which wall is "behind" follows from the run the appliance stands in: a
+    // run lies along its wall, so the wall shares the run's long axis. Taking
+    // the nearest wall in any direction instead reaches sideways to whatever
+    // happens to be closest — here the wall beside the stair, which is across
+    // the front of the fridge, not behind it.
+    const cx = (box.minX + box.maxX) / 2;
+    const cy = (box.minY + box.maxY) / 2;
+    const host = counters.find((k) => cx >= k.minX - 2 && cx <= k.maxX + 2
+      && cy >= k.minY - 2 && cy <= k.maxY + 2);
+    if (host) {
+      const alongX = (host.maxX - host.minX) >= (host.maxY - host.minY);
+      const backing = walls
+        .filter((wall) => (wall.axis === "horizontal") === alongX)
+        .map((wall) => {
+          const half = wall.thickness / 2 + 1;
+          return {
+            minX: Math.min(wall.start[0], wall.end[0]) - half,
+            maxX: Math.max(wall.start[0], wall.end[0]) + half,
+            minY: Math.min(wall.start[1], wall.end[1]) - half,
+            maxY: Math.max(wall.start[1], wall.end[1]) + half,
+          };
+        })
+        .map((band) => ({
+          band,
+          distance: Math.hypot(
+            Math.max(band.minX - cx, 0, cx - band.maxX),
+            Math.max(band.minY - cy, 0, cy - band.maxY),
+          ),
+        }))
+        .sort((a, b) => a.distance - b.distance)[0];
+      // Slide it back against the wall rather than stretching it there: the
+      // gap is the wall cabinets drawn behind the run, not extra appliance. A
+      // fridge is about 0.65 m deep whatever is drawn around it.
+      if (backing && backing.distance * metresPerPixel < 0.75) {
+        const band = backing.band;
+        const shift = (gap: number) => {
+          if (alongX) { box.minY += gap; box.maxY += gap; }
+          else { box.minX += gap; box.maxX += gap; }
+        };
+        if (alongX) {
+          if (band.maxY <= box.minY) shift(band.maxY - box.minY);
+          else if (band.minY >= box.maxY) shift(band.minY - box.maxY);
+        } else if (band.maxX <= box.minX) shift(band.maxX - box.minX);
+        else if (band.minX >= box.maxX) shift(band.minX - box.maxX);
+      }
+    }
     results.push({
       id: `cc-fridge-${results.length + 1}`,
       kind: "fridge",
@@ -1174,6 +1224,41 @@ function detectComponentFixtures(
       rotation: 0,
       confidence: 0.74,
     });
+  }
+
+  // A tall appliance interrupts the run it stands in: the worktop stops at its
+  // side rather than passing through it. Where an appliance splits a run in
+  // two, the longer remaining stretch is the worktop.
+  for (const counter of results) {
+    if (counter.kind !== "countertop") continue;
+    const lengthwise = counter.width >= counter.height;
+    let from = lengthwise ? counter.x - counter.width / 2 : counter.y - counter.height / 2;
+    let to = lengthwise ? counter.x + counter.width / 2 : counter.y + counter.height / 2;
+    for (const tall of results) {
+      if (tall.kind !== "fridge") continue;
+      const overlapAcross = lengthwise
+        ? Math.min(counter.y + counter.height / 2, tall.y + tall.height / 2)
+          - Math.max(counter.y - counter.height / 2, tall.y - tall.height / 2)
+        : Math.min(counter.x + counter.width / 2, tall.x + tall.width / 2)
+          - Math.max(counter.x - counter.width / 2, tall.x - tall.width / 2);
+      if (overlapAcross <= 0) continue;
+      const tallFrom = lengthwise ? tall.x - tall.width / 2 : tall.y - tall.height / 2;
+      const tallTo = lengthwise ? tall.x + tall.width / 2 : tall.y + tall.height / 2;
+      if (tallTo <= from || tallFrom >= to) continue;
+      if (tallFrom - from >= to - tallTo) to = Math.max(from, tallFrom);
+      else from = Math.min(to, tallTo);
+    }
+    const trimmed = to - from;
+    const original = lengthwise ? counter.width : counter.height;
+    if (trimmed >= original - 0.5) continue;
+    if (trimmed * metresPerPixel < SIZE.counterLength[0]) continue;
+    if (lengthwise) {
+      counter.x = (from + to) / 2;
+      counter.width = trimmed;
+    } else {
+      counter.y = (from + to) / 2;
+      counter.height = trimmed;
+    }
   }
 
   // Toilets share this pass's labelling: the pan ring must fall inside one of

@@ -691,14 +691,21 @@ function FurnitureModel({ fixture, elevation }: { fixture: Fixture; elevation: n
         ))}
       </group>
     );
+    // A fridge is a tall unit, the height of the joinery it stands among, not
+    // something derived from how deep it happens to be drawn.
     case "fridge": return (
-      <group position={[x, y + (fixture.depth ?? depth) * 0.8 / 2, z]} rotation={[0, rotation, 0]}>
+      <group position={[x, y + CUPBOARD_HEIGHT / 2, z]} rotation={[0, rotation, 0]}>
         <mesh castShadow receiveShadow>
-          <boxGeometry args={[width, Math.min(1.85, Math.max(0.5, depth * 4)), depth]} />
+          <boxGeometry args={[width, CUPBOARD_HEIGHT, depth]} />
           <meshStandardMaterial color="#e8e6e0" roughness={0.45} metalness={0.15} />
         </mesh>
+        {/* Split between fridge and freezer compartments */}
+        <mesh position={[0, CUPBOARD_HEIGHT * 0.12, depth / 2 + 0.004]}>
+          <boxGeometry args={[width * 0.96, 0.012, 0.008]} />
+          <meshStandardMaterial color="#b9b6ae" roughness={0.6} />
+        </mesh>
         {/* Handle */}
-        <mesh position={[width * 0.38, 0.3, depth * 0.52]} castShadow>
+        <mesh position={[width * 0.38, CUPBOARD_HEIGHT * 0.28, depth / 2 + 0.02]} castShadow>
           <boxGeometry args={[0.025, 0.28, 0.03]} />
           <meshStandardMaterial color="#aaa" roughness={0.3} metalness={0.7} />
         </mesh>
