@@ -404,7 +404,6 @@ function detectWallStripFixtures(
   walls: DetectorWall[],
   wallThickness: number,
   footprint: Bounds,
-  obstacles: FixtureObstacle[],
 ): DetectedFixture[] {
   const imgH = mask.length / imgW;
   const maxDepth = Math.round(wallThickness * 3.5);
@@ -500,8 +499,7 @@ function detectWallStripFixtures(
     }
   }
 
-  const cleared = obstacles.length ? results.filter((f) => !overlapsObstacle(f, obstacles)) : results;
-  return deduplicateFixtures(cleared);
+  return deduplicateFixtures(results);
 }
 
 /** Classify a wall-strip run into a fixture kind based on its shape.
@@ -565,7 +563,7 @@ export function detectFurniture(
   // fixtures (countertops, cupboards). This replaces the brute-force
   // bordered-box detectors which produce too many false positives.
   if (walls.length > 0) {
-    all.push(...detectWallStripFixtures(mask, imgW, walls, wallThickness, footprint, obstacles));
+    all.push(...detectWallStripFixtures(mask, imgW, walls, wallThickness, footprint));
   }
 
   const cleared = obstacles.length ? all.filter((f) => !overlapsObstacle(f, obstacles)) : all;

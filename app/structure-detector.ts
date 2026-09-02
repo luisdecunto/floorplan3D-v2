@@ -2443,10 +2443,8 @@ function detectFloorStructureAligned(
     end: w.end,
     thickness: w.thickness,
   }));
-  const fixtures = detectFurniture(mediumMask, width, footprintBounds, wallThickness, [
-    ...stairObstacles,
-    ...wallObstacles,
-  ], 60, detectorWalls);
+  const fixtures = detectFurniture(mediumMask, width, footprintBounds, wallThickness,
+    stairObstacles, 60, detectorWalls);
   return {
     regionId: region.id,
     sourceWidth: width,
