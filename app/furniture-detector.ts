@@ -9,7 +9,7 @@
 
 export type DetectedFixture = {
   id: string;
-  kind: "fridge" | "stove" | "sink" | "island" | "cupboard" | "toilet" | "shower" | "bathtub" | "washer";
+  kind: "fridge" | "stove" | "sink" | "island" | "cupboard" | "toilet" | "shower" | "bathtub" | "washer" | "countertop";
   x: number;
   y: number;
   width: number;
@@ -378,6 +378,150 @@ function deduplicateFixtures(fixtures: DetectedFixture[]): DetectedFixture[] {
  */
 export type FixtureObstacle = { minX: number; minY: number; maxX: number; maxY: number };
 
+/** Pixel-space wall segment for wall-strip scanning. */
+export type DetectorWall = {
+  axis: "horizontal" | "vertical";
+  start: [number, number];
+  end: [number, number];
+  thickness: number;
+};
+
+/**
+ * Wall-strip fixture detector: for each wall, scan a strip on each side and
+ * find continuous runs of ink that indicate an attached fixture. This is the
+ * core approach — instead of searching for random rectangles across the whole
+ * footprint, we only look for structure that shares a border with a known wall.
+ *
+ * For each wall, we define a "strip" — a narrow band (maxDepth px deep)
+ * parallel to the wall, starting just past the wall's edge. We walk along the
+ * wall in steps and measure ink density in each cross-wall slice. A continuous
+ * run of elevated density (above the threshold) that spans at least minRun px
+ * is a fixture candidate.
+ */
+function detectWallStripFixtures(
+  mask: Uint8Array,
+  imgW: number,
+  walls: DetectorWall[],
+  wallThickness: number,
+  footprint: Bounds,
+  obstacles: FixtureObstacle[],
+): DetectedFixture[] {
+  const imgH = mask.length / imgW;
+  const maxDepth = Math.round(wallThickness * 2.8);
+  const minDepth = Math.round(wallThickness * 0.5);
+  const minRun = Math.round(wallThickness * 1.8);
+  const densityThreshold = 0.06;
+  const step = Math.max(1, Math.round(wallThickness * 0.25));
+  const results: DetectedFixture[] = [];
+
+  for (const wall of walls) {
+    const wallLength = Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1]);
+    if (wallLength < minRun) continue;
+
+    for (const side of [-1, 1] as const) {
+      // For each side of the wall, scan the adjacent strip.
+      // side = -1 means "left/above", +1 means "right/below"
+      const profile: Array<{ pos: number; depth: number; density: number }> = [];
+
+      for (let along = 0; along <= Math.round(wallLength); along += step) {
+        const t = along / wallLength;
+        const wx = wall.start[0] + t * (wall.end[0] - wall.start[0]);
+        const wy = wall.start[1] + t * (wall.end[1] - wall.start[1]);
+
+        // Measure cross-wall ink depth: how far does ink extend from the wall edge?
+        let inkDepth = 0;
+        let totalInk = 0;
+        for (let d = 1; d <= maxDepth; d += 1) {
+          const px = wall.axis === "horizontal" ? wx : wx + side * (wall.thickness / 2 + d);
+          const py = wall.axis === "horizontal" ? wy + side * (wall.thickness / 2 + d) : wy;
+          const ix = Math.round(px);
+          const iy = Math.round(py);
+          if (ix < 0 || ix >= imgW || iy < 0 || iy >= imgH) break;
+          if (ix < footprint.minX || ix > footprint.maxX || iy < footprint.minY || iy > footprint.maxY) break;
+          if (mask[iy * imgW + ix]) {
+            totalInk += 1;
+            inkDepth = d;
+          }
+        }
+        const d = maxDepth > 0 ? totalInk / maxDepth : 0;
+        profile.push({ pos: along, depth: inkDepth, density: d });
+      }
+
+      // Find continuous runs of elevated density
+      let runStart = -1;
+      let runDepths: number[] = [];
+      for (let i = 0; i <= profile.length; i += 1) {
+        const above = i < profile.length && profile[i].density >= densityThreshold && profile[i].depth >= minDepth;
+        if (above) {
+          if (runStart < 0) runStart = i;
+          runDepths.push(profile[i].depth);
+        } else if (runStart >= 0) {
+          const runLength = (i - runStart) * step;
+          if (runLength >= minRun) {
+            const medianDepth = [...runDepths].sort((a, b) => a - b)[Math.floor(runDepths.length / 2)];
+            const startAlong = profile[runStart].pos;
+            const endAlong = profile[i - 1].pos;
+            const midAlong = (startAlong + endAlong) / 2;
+            const t = midAlong / wallLength;
+            const cx = wall.start[0] + t * (wall.end[0] - wall.start[0]);
+            const cy = wall.start[1] + t * (wall.end[1] - wall.start[1]);
+            const fixtureDepth = Math.min(medianDepth, maxDepth);
+
+            let fx: number, fy: number, fw: number, fh: number;
+            if (wall.axis === "horizontal") {
+              fx = cx;
+              fy = cy + side * (wall.thickness / 2 + fixtureDepth / 2);
+              fw = runLength;
+              fh = fixtureDepth;
+            } else {
+              fx = cx + side * (wall.thickness / 2 + fixtureDepth / 2);
+              fy = cy;
+              fw = fixtureDepth;
+              fh = runLength;
+            }
+
+            const aspect = Math.max(fw, fh) / Math.max(1, Math.min(fw, fh));
+            const kind = classifyWallStrip(aspect, runLength, fixtureDepth, wallThickness);
+            if (kind) {
+              results.push({
+                id: `ws-${results.length + 1}`,
+                kind,
+                x: fx, y: fy,
+                width: fw, height: fh,
+                rotation: 0,
+                confidence: clamp(0.45 + aspect * 0.04 + runLength / wallLength * 0.2, 0.45, 0.82),
+              });
+            }
+          }
+          runStart = -1;
+          runDepths = [];
+        }
+      }
+    }
+  }
+
+  const cleared = obstacles.length ? results.filter((f) => !overlapsObstacle(f, obstacles)) : results;
+  return deduplicateFixtures(cleared);
+}
+
+/** Classify a wall-strip run into a fixture kind based on its shape. */
+function classifyWallStrip(
+  aspect: number,
+  runLength: number,
+  depth: number,
+  wallThickness: number,
+): DetectedFixture["kind"] | null {
+  // Countertop: long run (3+ wallThickness), shallow depth (1-2.5 wallThickness)
+  if (runLength >= wallThickness * 3 && depth >= wallThickness * 0.6 && depth <= wallThickness * 2.8 && aspect >= 2.0) {
+    return "countertop";
+  }
+  // Cupboard: medium-to-long run, shallow depth, narrower than a countertop
+  if (runLength >= wallThickness * 2 && depth >= wallThickness * 0.4 && depth <= wallThickness * 2.0 && aspect >= 1.6) {
+    return "cupboard";
+  }
+  return null;
+}
+
 /** True when a fixture's box overlaps any obstacle by more than `maxOverlap` of its own area. */
 function overlapsObstacle(f: DetectedFixture, obstacles: FixtureObstacle[], maxOverlap = 0.2): boolean {
   const fMinX = f.x - f.width / 2;
@@ -406,22 +550,20 @@ export function detectFurniture(
   wallThickness: number,
   obstacles: FixtureObstacle[] = [],
   maxFixtures = 24,
+  walls: DetectorWall[] = [],
 ): DetectedFixture[] {
-  // Measured on the seven-fixture corpus (tests/benchmark/fixture-diag.mjs):
-  // the bordered-box detectors — detectFridges, detectSinks, detectToilets,
-  // detectShowersAndBathtubs — fire 20–48 times PER PLAN, saturating the cap
-  // on dimension text, room-label boxes and window mullions. They do not
-  // separate real fixtures from drawing furniture and text, so per the Stage 5
-  // gate ("a detector that fires on furniture outlines/text stays off") they
-  // are disabled here. detectStoves is the only one that scores zero false
-  // positives across all seven fixtures, so it alone runs; when it finds
-  // nothing the fixture list is empty — the intended fallback. The other
-  // detectors remain exported for a future tuning pass keyed to room type.
   const all: DetectedFixture[] = [
     ...detectStoves(mask, imgW, footprint, wallThickness),
   ];
+
+  // Wall-strip detector: scan strips adjacent to each wall for attached
+  // fixtures (countertops, cupboards). This replaces the brute-force
+  // bordered-box detectors which produce too many false positives.
+  if (walls.length > 0) {
+    all.push(...detectWallStripFixtures(mask, imgW, walls, wallThickness, footprint, obstacles));
+  }
+
   const cleared = obstacles.length ? all.filter((f) => !overlapsObstacle(f, obstacles)) : all;
-  // Re-number ids uniquely after merging all kinds
   const renumbered = cleared.map((f, i) => ({ ...f, id: `fixture-${i + 1}` }));
   return deduplicateFixtures(renumbered).slice(0, maxFixtures);
 }

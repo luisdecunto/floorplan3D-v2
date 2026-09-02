@@ -1,6 +1,6 @@
 import type { SourceRegion } from "./plan-regions";
 import type { Fixture, Level, Opening, OutdoorArea, Room, Stair, Wall } from "./scene-data";
-import { detectFurniture, type FixtureObstacle } from "./furniture-detector.ts";
+import { detectFurniture, type DetectorWall, type FixtureObstacle } from "./furniture-detector.ts";
 export type { DetectedFixture } from "./furniture-detector.ts";
 
 export type Axis = "horizontal" | "vertical";
@@ -1736,7 +1736,7 @@ export function expandDetectedStairReturn(
 
   const direction = stairCrossCenter > footprintCrossCenter ? -1 : 1;
   const footprintCrossLength = vertical ? footprint.width : footprint.height;
-  const maximumDistance = Math.floor(Math.min(crossLength * 0.9, runLength * 0.58, footprintCrossLength * 0.2));
+  const maximumDistance = Math.floor(Math.min(crossLength * 0.8, runLength * 0.5, footprintCrossLength * 0.16));
   const runStart = Math.round((vertical ? stair.y : stair.x) + runLength * 0.09);
   const runEnd = Math.round((vertical ? stair.y + stair.height : stair.x + stair.width) - runLength * 0.09);
   const boundary = direction < 0
@@ -1768,7 +1768,7 @@ export function expandDetectedStairReturn(
   }
 
   const minimumExpansion = Math.max(3, crossLength * 0.16);
-  const maximumShaftCross = footprintCrossLength * 0.36;
+  const maximumShaftCross = footprintCrossLength * 0.25;
   const expansion = Math.min(farthestEvidence, Math.max(0, maximumShaftCross - crossLength));
   if (expansion < minimumExpansion) return stair;
   if (vertical) {
@@ -2437,10 +2437,16 @@ function detectFloorStructureAligned(
     maxX: Math.max(wall.start[0], wall.end[0]) + wall.thickness,
     maxY: Math.max(wall.start[1], wall.end[1]) + wall.thickness,
   }));
+  const detectorWalls: DetectorWall[] = walledWithRails.map((w) => ({
+    axis: w.axis,
+    start: w.start,
+    end: w.end,
+    thickness: w.thickness,
+  }));
   const fixtures = detectFurniture(mediumMask, width, footprintBounds, wallThickness, [
     ...stairObstacles,
     ...wallObstacles,
-  ]);
+  ], 24, detectorWalls);
   return {
     regionId: region.id,
     sourceWidth: width,
@@ -2730,17 +2736,25 @@ export function structureToLevel(
       confidence: area.confidence,
     };
   });
-  const stairs: Stair[] = structure.stairs.map((stair) => ({
-    id: stair.id,
-    x: (stair.x + stair.width / 2 - centerX) * pixelsToMetres,
-    z: (stair.y + stair.height / 2 - centerY) * pixelsToMetres,
-    width: stair.width * pixelsToMetres,
-    depth: stair.height * pixelsToMetres,
-    runAxis: stair.runAxis,
-    stepCount: stair.stepCount,
-    confidence: stair.confidence,
-    ...(stair.ascend ? { ascend: stair.ascend } : {}),
-  }));
+  const stairs: Stair[] = structure.stairs.map((stair) => {
+    const rawWidth = stair.width * pixelsToMetres;
+    const rawDepth = stair.height * pixelsToMetres;
+    const crossAxis = stair.runAxis === "vertical" ? rawWidth : rawDepth;
+    const runAxis = stair.runAxis === "vertical" ? rawDepth : rawWidth;
+    const clampedCross = clamp(crossAxis, 0.8, 2.6);
+    const clampedRun = clamp(runAxis, 1.2, 5);
+    return {
+      id: stair.id,
+      x: (stair.x + stair.width / 2 - centerX) * pixelsToMetres,
+      z: (stair.y + stair.height / 2 - centerY) * pixelsToMetres,
+      width: stair.runAxis === "vertical" ? clampedCross : clampedRun,
+      depth: stair.runAxis === "vertical" ? clampedRun : clampedCross,
+      runAxis: stair.runAxis,
+      stepCount: stair.stepCount,
+      confidence: stair.confidence,
+      ...(stair.ascend ? { ascend: stair.ascend } : {}),
+    };
+  });
   const rooms: Room[] = structure.rooms.map((room) => ({
     id: room.id,
     polygon: room.polygon.map(toScene),

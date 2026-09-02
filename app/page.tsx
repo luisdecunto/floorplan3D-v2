@@ -1678,6 +1678,21 @@ function PlanReview({
               })}
             </g>
           )) ?? [])}
+          {regions.flatMap((region) => (structures[region.id]?.fixtures ?? []).map((fixture) => (
+            <rect
+              key={`${region.id}-${fixture.id}`}
+              className={`detected-fixture ${activeLevel === region.id ? "active" : ""}`}
+              x={fixture.x - fixture.width / 2}
+              y={fixture.y - fixture.height / 2}
+              width={fixture.width}
+              height={fixture.height}
+              transform={structures[region.id]?.sourceRotationDegrees && structures[region.id]?.rotationCenter
+                ? `rotate(${structures[region.id].sourceRotationDegrees} ${structures[region.id].rotationCenter?.[0]} ${structures[region.id].rotationCenter?.[1]})`
+                : undefined}
+            >
+              <title>{fixture.kind} ({(fixture.confidence * 100).toFixed(0)}%)</title>
+            </rect>
+          )))}
         </svg>
       )}
       {!focusRegion && (

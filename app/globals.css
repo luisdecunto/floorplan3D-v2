@@ -987,6 +987,8 @@ select:focus-visible {
 .detected-stair.active { opacity: 0.92; }
 .detected-stair rect { fill: rgba(126, 78, 170, 0.14); stroke: #7e4eaa; stroke-width: 2; }
 .detected-stair line { stroke: #7e4eaa; stroke-width: 1.35; }
+.detected-fixture { fill: rgba(224, 120, 40, 0.18); stroke: #e07828; stroke-width: 1.5; opacity: 0.4; transition: opacity 140ms ease; }
+.detected-fixture.active { opacity: 0.92; }
 .region-overlay { position: absolute; inset: 0; z-index: 3; }
 .detection-legend {
   position: absolute;
