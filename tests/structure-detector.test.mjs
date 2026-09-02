@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildStairConnections, sceneFootprint, slabPieces, slabPieceTextureUv, stairwellOpening } from "../app/scene-geometry.ts";
-import { alignAdjacentStairStructures, detectFloorStructure, expandDetectedStairReturn, structureToLevel } from "../app/structure-detector.ts";
+import { alignAdjacentStairStructures, clampStairRunToCrossingWalls, detectFloorStructure, expandDetectedStairReturn, splitStairIntoParts, structureToLevel } from "../app/structure-detector.ts";
 
 function syntheticPlan() {
   const width = 240;
@@ -81,22 +81,27 @@ test("thick strokes, door evidence and an exterior rail become structure", () =>
 });
 
 test("a stair run stops at the wall it climbs towards", () => {
-  const { pixels, width, height } = syntheticPlan();
-  const region = { id: "level-stair", name: "First floor", x: 0, y: 0, width: 1, height: 1, confidence: 0.9, hasOutdoorArea: true };
-  const structure = detectFloorStructure(pixels, width, height, region);
-  // Treads paired with linework outside the façade used to leave the flight
-  // reaching through the exterior wall, putting the modelled stair outside the
-  // building. Whatever is detected must stay within the walls.
-  for (const stair of structure.stairs) {
-    const top = Math.min(...structure.walls
-      .filter((wall) => wall.axis === "horizontal")
-      .map((wall) => (wall.start[1] + wall.end[1]) / 2 - wall.thickness / 2));
-    assert.ok(stair.y >= top - 1,
-      `stair top ${stair.y.toFixed(1)} should not pass the outer wall face at ${top.toFixed(1)}`);
-    assert.ok(stair.x >= structure.footprint.x - 1
-      && stair.x + stair.width <= structure.footprint.x + structure.footprint.width + 1,
-      "stair should stay inside the footprint");
-  }
+  // Treads paired with linework beyond the façade left the flight reaching
+  // through the exterior wall, putting the modelled stair outside the building.
+  const stair = { id: "s", runAxis: "vertical", x: 139, y: 16, width: 53, height: 75, stepCount: 13, confidence: 0.8 };
+  const walls = [
+    // The exterior wall the flight climbs towards, crossing the run at its top.
+    { id: "top", axis: "horizontal", start: [90, 24], end: [280, 24], thickness: 16, openings: [], confidence: 0.9 },
+    // A partition further down, lying across the middle of the run.
+    { id: "mid", axis: "horizontal", start: [90, 60], end: [280, 60], thickness: 6, openings: [], confidence: 0.9 },
+  ];
+  const [clamped] = clampStairRunToCrossingWalls([stair], walls);
+  assert.ok(clamped.y >= 32 - 0.5, `top should stop at the wall face, got ${clamped.y}`);
+  assert.ok(clamped.y + clamped.height >= 88,
+    "the partition across the middle must not cut the run short");
+});
+
+test("a stair whose run clears every wall is left alone", () => {
+  const stair = { id: "s", runAxis: "vertical", x: 139, y: 40, width: 53, height: 40, stepCount: 13, confidence: 0.8 };
+  const walls = [{ id: "top", axis: "horizontal", start: [90, 24], end: [280, 24], thickness: 16, openings: [], confidence: 0.9 }];
+  const [clamped] = clampStairRunToCrossingWalls([stair], walls);
+  assert.equal(clamped.y, 40);
+  assert.equal(clamped.height, 40);
 });
 
 test("walls and swing-door symbols survive a rotated source plan", () => {
@@ -198,6 +203,55 @@ test("adjacent floors share the upper-floor stair shaft in analyser coordinates"
   const upperCenter = (upperBox.x + upperBox.width / 2 - upper.footprint.x) / upper.footprint.width;
   assert.ok(Math.abs(lowerCenter - upperCenter) < 0.0001);
   assert.ok(Math.abs(lowerBox.width / lower.footprint.width - upperBox.width / upper.footprint.width) < 0.0001);
+});
+
+/** A turned stair: winder treads across the shaft, then a flight down one side. */
+function turnedStairMask(width, height) {
+  const mask = new Uint8Array(width * height);
+  const line = (x1, y1, x2, y2) => {
+    for (let y = y1; y <= y2; y += 1) for (let x = x1; x <= x2; x += 1) mask[y * width + x] = 1;
+  };
+  // Winder treads reach the full width of the shaft; the flight's are confined
+  // to one side. Drawn close together, as a fan's radiating lines cross nearly
+  // every row of the plan.
+  for (let y = 34; y <= 74; y += 2) line(114, y, 186, y);
+  for (let y = 76; y <= 148; y += 2) line(150, y, 186, y);
+  line(114, 34, 114, 74);
+  line(150, 76, 150, 148);
+  line(186, 34, 186, 148);
+  return mask;
+}
+
+test("a turned stair is split into its winder and its flight", () => {
+  const width = 240;
+  const height = 190;
+  const mask = turnedStairMask(width, height);
+  // The box is fitted to the flight's parallel treads, so it clips the winder.
+  const stair = { id: "s", runAxis: "vertical", x: 150, y: 34, width: 36, height: 114, stepCount: 14, confidence: 0.8 };
+  const split = splitStairIntoParts(stair, mask, width, height, []);
+
+  assert.ok(split.winder && split.flight, "expected the turn to be separated from the run");
+  assert.ok(split.winder.width > split.flight.width * 1.3,
+    `winder ${split.winder.width} should be wider than flight ${split.flight.width}`);
+  // The clipped winder is recovered, so the box grows to hold both parts.
+  assert.ok(split.x <= 115, `box should reach the winder's outer edge, got ${split.x}`);
+  const minX = Math.min(split.winder.x, split.flight.x);
+  const maxX = Math.max(split.winder.x + split.winder.width, split.flight.x + split.flight.width);
+  assert.equal(minX, split.x, "the parts should bound exactly the stair box");
+  assert.equal(maxX, split.x + split.width);
+});
+
+test("a straight flight is left as one rectangle", () => {
+  const width = 240;
+  const height = 190;
+  const mask = new Uint8Array(width * height);
+  for (let i = 0; i < 12; i += 1) {
+    for (let x = 150; x <= 186; x += 1) mask[(40 + i * 8) * width + x] = 1;
+  }
+  const stair = { id: "s", runAxis: "vertical", x: 150, y: 40, width: 36, height: 96, stepCount: 12, confidence: 0.8 };
+  const split = splitStairIntoParts(stair, mask, width, height, []);
+  assert.equal(split.winder, undefined, "a constant-width run has no turn to separate");
+  assert.equal(split.flight, undefined);
 });
 
 test("a winder keeps each floor's own stair width", () => {

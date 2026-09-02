@@ -65,6 +65,16 @@ export type DetectedStair = {
    *  far corner (x+width, y+height). Absent when the arrow could not be found
    *  reliably; callers must fall back to the existing heuristic in that case. */
   ascend?: "start" | "end";
+  /**
+   * A turned stair covers an L, not the rectangle bounding it: winder treads
+   * fan across the full width at one end, and the straight flight runs down one
+   * side of the rest. Both are given when the two can be told apart, and x/y/
+   * width/height stay the bounding box of the pair, so anything reasoning about
+   * the shaft as a whole — the slab opening, the flight-to-flight connection —
+   * is unaffected.
+   */
+  winder?: { x: number; y: number; width: number; height: number };
+  flight?: { x: number; y: number; width: number; height: number };
 };
 
 export type DetectedStructure = {
@@ -2188,6 +2198,151 @@ export function inspectStructureEvidence(
  * large enough to be a stair. Fallback in every other case: the box is unchanged.
  */
 /**
+ * Separate a turned stair into its winder and its straight flight.
+ *
+ * A winder's treads fan out to fill the full width of the shaft, while the
+ * flight below runs at a constant, narrower width down one side. Measuring how
+ * far the linework reaches across the shaft at each point along the run
+ * therefore gives a step profile: wide over the winder, narrow over the flight,
+ * with a sharp edge between them. The bounding box of the two is the rectangle
+ * that was being modelled before, which covers open floor in the corner the
+ * stair turns away from.
+ *
+ * The scan reaches past the detected box out to the walls flanking the shaft,
+ * because the box is fitted to the flight's parallel treads and clips the
+ * winder where it sweeps wider. Walls bound it so that a neighbouring room's
+ * contents cannot be read as part of the stair.
+ */
+export function splitStairIntoParts(
+  stair: DetectedStair,
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  walls: DetectedWall[],
+): DetectedStair {
+  const vertical = stair.runAxis === "vertical";
+  const runFrom = Math.round(vertical ? stair.y : stair.x);
+  const runTo = Math.round(vertical ? stair.y + stair.height : stair.x + stair.width);
+  const crossFrom = vertical ? stair.x : stair.y;
+  const crossTo = vertical ? stair.x + stair.width : stair.y + stair.height;
+  if (runTo - runFrom < 8) return stair;
+
+  // A winder reaches at most a shaft's width beyond the flight, and never past
+  // the walls enclosing it.
+  const crossCenter = (crossFrom + crossTo) / 2;
+  const reach = (crossTo - crossFrom) * 1.2;
+  let scanFrom = crossFrom - reach;
+  let scanTo = crossTo + reach;
+  for (const wall of walls) {
+    if (wall.axis !== stair.runAxis) continue;
+    const line = vertical ? (wall.start[0] + wall.end[0]) / 2 : (wall.start[1] + wall.end[1]) / 2;
+    const half = wall.thickness / 2;
+    const spanFrom = Math.min(vertical ? wall.start[1] : wall.start[0], vertical ? wall.end[1] : wall.end[0]);
+    const spanTo = Math.max(vertical ? wall.start[1] : wall.start[0], vertical ? wall.end[1] : wall.end[0]);
+    if (spanTo < runFrom || spanFrom > runTo) continue;
+    // Clamp to the face nearest the shaft, so a wall the box already overlaps
+    // still bounds the scan.
+    if (line < crossCenter) scanFrom = Math.max(scanFrom, line + half);
+    else scanTo = Math.min(scanTo, line - half);
+  }
+  scanFrom = Math.max(0, Math.round(scanFrom));
+  scanTo = Math.min((vertical ? width : height) - 1, Math.round(scanTo));
+  if (scanTo - scanFrom < 4) return stair;
+
+  const inked = (along: number, across: number) => {
+    const x = vertical ? across : along;
+    const y = vertical ? along : across;
+    if (x < 0 || x >= width || y < 0 || y >= height) return false;
+    return mask[y * width + x] === 1;
+  };
+
+  // Follow each tread out from the shaft rather than taking the widest ink on
+  // the line: a tread is one continuous stroke, so anything separated from it
+  // by clear space belongs to something else in the room.
+  const GAP = 2;
+  const spans: Array<{ from: number; to: number } | null> = [];
+  for (let along = runFrom; along <= runTo; along += 1) {
+    let seedFrom: number | null = null;
+    let seedTo = 0;
+    for (let across = Math.round(crossFrom); across <= Math.round(crossTo); across += 1) {
+      if (!inked(along, across)) continue;
+      if (seedFrom === null) seedFrom = across;
+      seedTo = across;
+    }
+    if (seedFrom === null) { spans.push(null); continue; }
+    let from = seedFrom;
+    for (let across = seedFrom - 1, gap = 0; across >= scanFrom; across -= 1) {
+      if (inked(along, across)) { from = across; gap = 0; } else if ((gap += 1) > GAP) break;
+    }
+    let to = seedTo;
+    for (let across = seedTo + 1, gap = 0; across <= scanTo; across += 1) {
+      if (inked(along, across)) { to = across; gap = 0; } else if ((gap += 1) > GAP) break;
+    }
+    spans.push({ from, to });
+  }
+  const measured = spans.map((s) => (s ? s.to - s.from + 1 : 0));
+  // Between treads a row catches only a stringer or two, which says nothing
+  // about how far the stair reaches there. Count a row only where a tread
+  // actually crosses it, so the profile reflects tread length rather than how
+  // densely the flight happens to be drawn.
+  const widest = Math.max(...measured);
+  const extents = measured.map((e) => (e >= widest * 0.3 ? e : 0));
+  if (extents.filter((e) => e > 0).length < 6) return stair;
+
+  // The split that best separates a wide band from a narrow one.
+  const mean = (from: number, to: number) => {
+    let sum = 0; let count = 0;
+    for (let i = from; i < to; i += 1) { if (extents[i] > 0) { sum += extents[i]; count += 1; } }
+    return count ? sum / count : 0;
+  };
+  const minBand = Math.max(3, Math.round((runTo - runFrom) * 0.18));
+  let best: { at: number; wide: number; narrow: number; ratio: number } | null = null;
+  for (let i = minBand; i <= extents.length - minBand; i += 1) {
+    const a = mean(0, i);
+    const b = mean(i, extents.length);
+    if (!a || !b) continue;
+    const ratio = Math.max(a, b) / Math.min(a, b);
+    if (!best || ratio > best.ratio) best = { at: i, wide: Math.max(a, b), narrow: Math.min(a, b), ratio };
+  }
+  // Below this the shaft is one straight flight and the box already describes it.
+  if (!best || best.ratio < 1.3) return stair;
+
+  const wideFirst = mean(0, best.at) > mean(best.at, extents.length);
+  const range = (from: number, to: number) => {
+    let lo = Number.POSITIVE_INFINITY; let hi = Number.NEGATIVE_INFINITY;
+    for (let i = from; i < to; i += 1) {
+      const s = spans[i];
+      if (!s) continue;
+      lo = Math.min(lo, s.from);
+      hi = Math.max(hi, s.to);
+    }
+    return Number.isFinite(lo) ? { lo, hi } : null;
+  };
+  const wideRange = wideFirst ? range(0, best.at) : range(best.at, extents.length);
+  const narrowRange = wideFirst ? range(best.at, extents.length) : range(0, best.at);
+  if (!wideRange || !narrowRange) return stair;
+
+  const splitAt = runFrom + best.at;
+  const band = (lo: number, hi: number, from: number, to: number) => (vertical
+    ? { x: lo, y: from, width: hi - lo, height: to - from }
+    : { x: from, y: lo, width: to - from, height: hi - lo });
+  const winder = wideFirst
+    ? band(wideRange.lo, wideRange.hi, runFrom, splitAt)
+    : band(wideRange.lo, wideRange.hi, splitAt, runTo);
+  const flight = wideFirst
+    ? band(narrowRange.lo, narrowRange.hi, splitAt, runTo)
+    : band(narrowRange.lo, narrowRange.hi, runFrom, splitAt);
+
+  // The box becomes the pair's bounds, so a winder clipped by the original fit
+  // is recovered rather than lost.
+  const minX = Math.min(winder.x, flight.x);
+  const minY = Math.min(winder.y, flight.y);
+  const maxX = Math.max(winder.x + winder.width, flight.x + flight.width);
+  const maxY = Math.max(winder.y + winder.height, flight.y + flight.height);
+  return { ...stair, x: minX, y: minY, width: maxX - minX, height: maxY - minY, winder, flight };
+}
+
+/**
  * Pull the ends of a stair run back to the walls that cross it.
  *
  * `clampStairsToFlankingWalls` bounds the shaft sideways, using the walls that
@@ -2200,7 +2355,7 @@ export function inspectStructureEvidence(
  * ends are clamped, never a wall lying across the middle of the box, which
  * would halve a stair that legitimately passes a partition on its way up.
  */
-function clampStairRunToCrossingWalls(
+export function clampStairRunToCrossingWalls(
   stairs: DetectedStair[],
   walls: DetectedWall[],
 ): DetectedStair[] {
@@ -2215,7 +2370,6 @@ function clampStairRunToCrossingWalls(
     const runMin = vertical ? stair.y : stair.x;
     const runMax = vertical ? stair.y + stair.height : stair.x + stair.width;
     const originalRun = runMax - runMin;
-    const runCenter = (runMin + runMax) / 2;
 
     let newMin = runMin;
     let newMax = runMax;
@@ -2241,9 +2395,12 @@ function clampStairRunToCrossingWalls(
       const overlap = Math.max(0, Math.min(wallCrossTo, crossMax) - Math.max(wallCrossFrom, crossMin));
       if (overlap < (crossMax - crossMin) * MIN_SPAN_COVERAGE) continue;
 
-      // Wholly past one end, so the flight stops here rather than being cut.
-      if (bandTo < runCenter) newMin = Math.max(newMin, bandTo);
-      else if (bandFrom > runCenter) newMax = Math.min(newMax, bandFrom);
+      // Only a wall near an end is one the box has overshot into. A partition
+      // further along is one the flight passes on its way up, and clamping to
+      // it would cut the run in half.
+      const endZone = (runMax - runMin) * 0.3;
+      if (bandTo <= runMin + endZone) newMin = Math.max(newMin, bandTo);
+      else if (bandFrom >= runMax - endZone) newMax = Math.min(newMax, bandFrom);
     }
 
     if (newMax - newMin >= originalRun - 0.5) return stair;
@@ -2487,7 +2644,7 @@ function detectFloorStructureAligned(
       wallThickness,
     ),
     walls,
-  );
+  ).map((stair) => splitStairIntoParts(stair, mediumMask, width, height, walls));
   const walledWithRails = markBalustradeSpans(walls, stairs, mediumMask, width, height, wallThickness);
   const openingCount = walledWithRails.reduce((sum, wall) => sum + wall.openings.length, 0);
   const topologyVotes = walledWithRails.filter((wall) => walledWithRails.some((other) => other !== wall && (
@@ -2888,6 +3045,16 @@ export function structureToLevel(
     const runAxis = stair.runAxis === "vertical" ? rawDepth : rawWidth;
     const clampedCross = clamp(crossAxis, 0.8, 2.6);
     const clampedRun = clamp(runAxis, 1.2, 5);
+    const toBox = (part: { x: number; y: number; width: number; height: number }) => ({
+      x: (part.x + part.width / 2 - centerX) * pixelsToMetres,
+      z: (part.y + part.height / 2 - centerY) * pixelsToMetres,
+      width: part.width * pixelsToMetres,
+      depth: part.height * pixelsToMetres,
+    });
+    // The parts describe the box that was measured. If that box had to be
+    // clamped to a plausible size the two no longer agree, so drop them rather
+    // than draw an L that does not fit its own bounds.
+    const clamped = Math.abs(clampedCross - crossAxis) > 0.01 || Math.abs(clampedRun - runAxis) > 0.01;
     return {
       id: stair.id,
       x: (stair.x + stair.width / 2 - centerX) * pixelsToMetres,
@@ -2898,6 +3065,9 @@ export function structureToLevel(
       stepCount: stair.stepCount,
       confidence: stair.confidence,
       ...(stair.ascend ? { ascend: stair.ascend } : {}),
+      ...(stair.winder && stair.flight && !clamped
+        ? { winder: toBox(stair.winder), flight: toBox(stair.flight) }
+        : {}),
     };
   });
   const rooms: Room[] = structure.rooms.map((room) => ({

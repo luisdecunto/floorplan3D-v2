@@ -1611,13 +1611,28 @@ function PlanReview({
                 ? `rotate(${structures[region.id].sourceRotationDegrees} ${structures[region.id].rotationCenter?.[0]} ${structures[region.id].rotationCenter?.[1]})`
                 : undefined}
             >
-              <rect x={stair.x} y={stair.y} width={stair.width} height={stair.height} />
-              {Array.from({ length: Math.min(12, stair.stepCount) }, (_, index) => {
-                const count = Math.min(12, stair.stepCount);
-                const progress = (index + 1) / (count + 1);
-                return stair.runAxis === "vertical"
-                  ? <line key={index} x1={stair.x} x2={stair.x + stair.width} y1={stair.y + stair.height * progress} y2={stair.y + stair.height * progress} />
-                  : <line key={index} y1={stair.y} y2={stair.y + stair.height} x1={stair.x + stair.width * progress} x2={stair.x + stair.width * progress} />;
+              {/* A turned stair covers an L. Drawing its bounding box instead
+                  claims the corner the stair turns away from, which is open
+                  floor. Draw the winder and the flight when they are known. */}
+              {(stair.winder && stair.flight ? [stair.winder, stair.flight] : [stair]).map((part, partIndex) => {
+                const steps = Math.max(2, Math.round(
+                  Math.min(12, stair.stepCount)
+                  * (stair.winder && stair.flight
+                    ? (stair.runAxis === "vertical" ? part.height : part.width)
+                      / Math.max(1, stair.runAxis === "vertical" ? stair.height : stair.width)
+                    : 1),
+                ));
+                return (
+                  <g key={partIndex}>
+                    <rect x={part.x} y={part.y} width={part.width} height={part.height} />
+                    {Array.from({ length: steps }, (_, index) => {
+                      const progress = (index + 1) / (steps + 1);
+                      return stair.runAxis === "vertical"
+                        ? <line key={index} x1={part.x} x2={part.x + part.width} y1={part.y + part.height * progress} y2={part.y + part.height * progress} />
+                        : <line key={index} y1={part.y} y2={part.y + part.height} x1={part.x + part.width * progress} x2={part.x + part.width * progress} />;
+                    })}
+                  </g>
+                );
               })}
             </g>
           )) ?? [])}

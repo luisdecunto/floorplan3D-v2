@@ -52,6 +52,16 @@ export type Stair = {
   /** Which run-axis end goes up. "start" = (x, z) corner; "end" = far corner.
    *  Absent when the direction arrow could not be detected confidently. */
   ascend?: "start" | "end";
+  /**
+   * The two parts of a turned stair: winder treads fanning across the shaft at
+   * one end, and the straight flight down one side of the rest. `x`/`z`/`width`
+   * /`depth` remain the bounding box of the pair, so the stairwell opening and
+   * the flight-to-flight connection are unchanged; these describe the L that
+   * should actually be drawn and stood on. Absent for a straight flight, where
+   * the bounding box already is the stair.
+   */
+  winder?: { x: number; z: number; width: number; depth: number };
+  flight?: { x: number; z: number; width: number; depth: number };
 };
 
 export type FixtureKind =
