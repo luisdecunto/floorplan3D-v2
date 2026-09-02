@@ -13,7 +13,7 @@ const WALL_THICKNESS = 8;
  * they abut the walls, which is precisely the case that defeated the earlier
  * rectangle-sweep detector.
  */
-function syntheticBathroom() {
+function syntheticBathroom({ showerDoorSwing = false } = {}) {
   const mask = new Uint8Array(WIDTH * HEIGHT);
   const set = (x, y) => {
     if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) mask[y * WIDTH + x] = 1;
@@ -41,6 +41,15 @@ function syntheticBathroom() {
 
   // 1.00 x 1.00 m shower tray in the top-left corner, two sides on walls.
   outline(25, 25, 75, 75);
+  // The screen's swing, drawn from the open corner of the tray. It touches the
+  // tray, so it joins the same ink component and drags its bounding box well
+  // past shower size unless the tray's own edges are recovered.
+  if (showerDoorSwing) {
+    for (let t = 0; t <= 60; t += 1) {
+      set(25 + t, 75 + Math.round(t * 0.55));
+      set(26 + t, 75 + Math.round(t * 0.55));
+    }
+  }
   // 2.40 x 0.60 m counter run along the left wall, with a 0.80 x 0.40 m basin.
   outline(25, 180, 145, 210);
   outline(100, 185, 140, 205);
@@ -58,8 +67,8 @@ function syntheticBathroom() {
   return { mask, walls, footprint };
 }
 
-function detect() {
-  const { mask, walls, footprint } = syntheticBathroom();
+function detect(options) {
+  const { mask, walls, footprint } = syntheticBathroom(options);
   return detectFurniture(mask, WIDTH, footprint, WALL_THICKNESS, [], 24, walls, METRES_PER_PIXEL);
 }
 
@@ -78,6 +87,13 @@ test("a corner shower tray keeps the size it was drawn at", () => {
   assert.ok(Math.abs(metres(shower.width) - 1) <= 0.08, `width ${metres(shower.width)}`);
   assert.ok(Math.abs(metres(shower.height) - 1) <= 0.08, `height ${metres(shower.height)}`);
   assert.ok(Math.abs(shower.x - 50) <= 4 && Math.abs(shower.y - 50) <= 4, "centred on the tray");
+});
+
+test("a shower survives the screen swing drawn off its corner", () => {
+  const shower = detect({ showerDoorSwing: true }).find((f) => f.kind === "shower");
+  assert.ok(shower, "expected a shower despite the swing line touching the tray");
+  assert.ok(Math.abs(metres(shower.width) - 1) <= 0.12, `width ${metres(shower.width)}`);
+  assert.ok(Math.abs(metres(shower.height) - 1) <= 0.12, `height ${metres(shower.height)}`);
 });
 
 test("a basin is kept even though it sits inside its counter run", () => {

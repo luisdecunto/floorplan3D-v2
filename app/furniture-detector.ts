@@ -342,42 +342,46 @@ function sidesAgainstWalls(
   return result;
 }
 
-/** Measure the shape descriptors that separate one fixture symbol from another. */
-function describeComponent(
+type BoxBounds = { minX: number; minY: number; maxX: number; maxY: number };
+
+/** Measure the shape descriptors of one rectangle of a labelled component. */
+function measureBox(
   labels: Int32Array,
   imgW: number,
-  box: { id: number; minX: number; minY: number; maxX: number; maxY: number; area: number },
-  walls: DetectorWall[] = [],
-  wallTolerance = 0,
-): InkComponent {
-  const width = box.maxX - box.minX + 1;
-  const height = box.maxY - box.minY + 1;
+  id: number,
+  bounds: BoxBounds,
+  area: number,
+  walls: DetectorWall[],
+  wallTolerance: number,
+): Omit<InkComponent, "minX" | "minY" | "maxX" | "maxY"> {
+  const width = bounds.maxX - bounds.minX + 1;
+  const height = bounds.maxY - bounds.minY + 1;
   const band = Math.max(1, Math.round(Math.min(width, height) * 0.12));
-  const has = (x: number, y: number) => labels[y * imgW + x] === box.id;
+  const has = (x: number, y: number) => labels[y * imgW + x] === id;
 
   let top = 0; let bottom = 0;
-  for (let x = box.minX; x <= box.maxX; x += 1) {
+  for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
     for (let d = 0; d < band; d += 1) {
-      if (box.minY + d <= box.maxY && has(x, box.minY + d)) { top += 1; break; }
+      if (bounds.minY + d <= bounds.maxY && has(x, bounds.minY + d)) { top += 1; break; }
     }
     for (let d = 0; d < band; d += 1) {
-      if (box.maxY - d >= box.minY && has(x, box.maxY - d)) { bottom += 1; break; }
+      if (bounds.maxY - d >= bounds.minY && has(x, bounds.maxY - d)) { bottom += 1; break; }
     }
   }
   let left = 0; let right = 0;
-  for (let y = box.minY; y <= box.maxY; y += 1) {
+  for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
     for (let d = 0; d < band; d += 1) {
-      if (box.minX + d <= box.maxX && has(box.minX + d, y)) { left += 1; break; }
+      if (bounds.minX + d <= bounds.maxX && has(bounds.minX + d, y)) { left += 1; break; }
     }
     for (let d = 0; d < band; d += 1) {
-      if (box.maxX - d >= box.minX && has(box.maxX - d, y)) { right += 1; break; }
+      if (bounds.maxX - d >= bounds.minX && has(bounds.maxX - d, y)) { right += 1; break; }
     }
   }
 
   const inset = Math.max(2, Math.round(Math.min(width, height) * 0.22));
   let interiorInk = 0; let interiorArea = 0;
-  for (let y = box.minY + inset; y <= box.maxY - inset; y += 1) {
-    for (let x = box.minX + inset; x <= box.maxX - inset; x += 1) {
+  for (let y = bounds.minY + inset; y <= bounds.maxY - inset; y += 1) {
+    for (let x = bounds.minX + inset; x <= bounds.maxX - inset; x += 1) {
       interiorArea += 1;
       if (has(x, y)) interiorInk += 1;
     }
@@ -392,7 +396,7 @@ function describeComponent(
   // A side lying on an erased wall counts as closed: the drawing had an edge
   // there, wall removal took it away.
   const onWall = walls.length
-    ? sidesAgainstWalls(box, walls, wallTolerance)
+    ? sidesAgainstWalls(bounds, walls, wallTolerance)
     : { top: false, bottom: false, left: false, right: false };
   const effective = {
     top: onWall.top ? 1 : sides.top,
@@ -401,10 +405,9 @@ function describeComponent(
     right: onWall.right ? 1 : sides.right,
   };
   return {
-    minX: box.minX, minY: box.minY, maxX: box.maxX, maxY: box.maxY,
-    area: box.area,
+    area,
     width, height,
-    fill: box.area / Math.max(1, width * height),
+    fill: area / Math.max(1, width * height),
     sides,
     onWall,
     effectiveSides: effective,
@@ -412,6 +415,87 @@ function describeComponent(
     closedRect: effective.top >= 0.55 && effective.bottom >= 0.55
       && effective.left >= 0.55 && effective.right >= 0.55,
   };
+}
+
+/**
+ * Trim a component back to the rectangle it was drawn as.
+ *
+ * Symbols are rarely drawn in isolation: a shower screen's swing arc starts on
+ * the corner of its tray, so the two share an ink component and the bounding
+ * box stretches to cover the arc — enough to push a 1 m tray out of shower
+ * size entirely. The drawn edges are still recoverable, because a rectangle's
+ * sides are the only rows and columns carrying ink along their whole length,
+ * while an arc contributes a pixel or two to each of many rows. Snap each free
+ * side in to the outermost such line; sides resting on a wall keep the box
+ * edge, since wall erasure already removed the line that was there.
+ */
+function trimToDrawnRectangle(
+  labels: Int32Array,
+  imgW: number,
+  id: number,
+  box: BoxBounds,
+  onWall: { top: boolean; bottom: boolean; left: boolean; right: boolean },
+): BoxBounds | null {
+  const width = box.maxX - box.minX + 1;
+  const height = box.maxY - box.minY + 1;
+  const rowInk = new Int32Array(height);
+  const colInk = new Int32Array(width);
+  for (let y = box.minY; y <= box.maxY; y += 1) {
+    for (let x = box.minX; x <= box.maxX; x += 1) {
+      if (labels[y * imgW + x] !== id) continue;
+      rowInk[y - box.minY] += 1;
+      colInk[x - box.minX] += 1;
+    }
+  }
+  // Thresholds are relative to the longest line present, so they hold whatever
+  // the symbol's size or the plan's resolution.
+  const rowThreshold = Math.max(...rowInk) * 0.55;
+  const colThreshold = Math.max(...colInk) * 0.55;
+  const firstAbove = (values: Int32Array, threshold: number) => {
+    for (let i = 0; i < values.length; i += 1) if (values[i] >= threshold) return i;
+    return -1;
+  };
+  const lastAbove = (values: Int32Array, threshold: number) => {
+    for (let i = values.length - 1; i >= 0; i -= 1) if (values[i] >= threshold) return i;
+    return -1;
+  };
+
+  const top = onWall.top ? 0 : firstAbove(rowInk, rowThreshold);
+  const bottom = onWall.bottom ? height - 1 : lastAbove(rowInk, rowThreshold);
+  const left = onWall.left ? 0 : firstAbove(colInk, colThreshold);
+  const right = onWall.right ? width - 1 : lastAbove(colInk, colThreshold);
+  if (top < 0 || bottom < 0 || left < 0 || right < 0 || bottom <= top || right <= left) return null;
+
+  // Only ever shave an appendage off. A large collapse means the component was
+  // not a rectangle to begin with — a WC, whose pan carries no full-length
+  // line — and its own bounding box is the better description.
+  if ((right - left + 1) < width * 0.55 || (bottom - top + 1) < height * 0.55) return null;
+  if (top === 0 && left === 0 && bottom === height - 1 && right === width - 1) return null;
+
+  return {
+    minX: box.minX + left, minY: box.minY + top,
+    maxX: box.minX + right, maxY: box.minY + bottom,
+  };
+}
+
+/** Measure the shape descriptors that separate one fixture symbol from another. */
+function describeComponent(
+  labels: Int32Array,
+  imgW: number,
+  box: { id: number; minX: number; minY: number; maxX: number; maxY: number; area: number },
+  walls: DetectorWall[] = [],
+  wallTolerance = 0,
+): InkComponent {
+  const raw = measureBox(labels, imgW, box.id, box, box.area, walls, wallTolerance);
+  if (!raw.closedRect) {
+    const trimmed = trimToDrawnRectangle(labels, imgW, box.id, box, raw.onWall);
+    if (trimmed) {
+      const refined = measureBox(labels, imgW, box.id, trimmed, box.area, walls, wallTolerance);
+      // Adopt the trim only when it actually recovers a rectangle.
+      if (refined.closedRect) return { ...refined, ...trimmed };
+    }
+  }
+  return { ...raw, minX: box.minX, minY: box.minY, maxX: box.maxX, maxY: box.maxY };
 }
 
 /** Shortest gap from a component's box to any wall band, in pixels. */

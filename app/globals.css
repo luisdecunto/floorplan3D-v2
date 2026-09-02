@@ -993,6 +993,12 @@ select:focus-visible {
 .detected-fixture.fixture-cupboard { fill: rgba(180, 100, 40, 0.22); stroke: #b46428; }
 .detected-fixture.fixture-stove { fill: rgba(200, 50, 50, 0.22); stroke: #c83232; }
 .detected-fixture.fixture-island { fill: rgba(120, 120, 180, 0.18); stroke: #7878b4; }
+.detected-fixture.fixture-shower { fill: rgba(0, 160, 192, 0.22); stroke: #00a0c0; }
+.detected-fixture.fixture-bathtub { fill: rgba(0, 128, 160, 0.22); stroke: #0080a0; }
+.detected-fixture.fixture-toilet { fill: rgba(224, 33, 138, 0.22); stroke: #e0218a; }
+.detected-fixture.fixture-sink { fill: rgba(32, 80, 208, 0.22); stroke: #2050d0; }
+.detected-fixture.fixture-fridge { fill: rgba(128, 64, 192, 0.2); stroke: #8040c0; }
+.detected-fixture.fixture-washer { fill: rgba(208, 160, 0, 0.2); stroke: #d0a000; }
 .region-overlay { position: absolute; inset: 0; z-index: 3; }
 .detection-legend {
   position: absolute;
