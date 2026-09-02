@@ -2690,6 +2690,16 @@ export function alignAdjacentStairStructures(
       .sort((a, b) => a.distance - b.distance);
     const match = candidates[0];
     if (!match || match.distance > 0.22) continue;
+    // Only correct drift between two readings of the same shaft. A winder
+    // sweeps wider than the straight flight below it, so on a turned stair the
+    // two plans genuinely show different widths — the upper floor its fan, the
+    // lower its run — and forcing one onto the other squares off the turn and
+    // reports both floors with the same box. When the widths disagree by more
+    // than drift can explain, each floor keeps what its own plan shows.
+    const upperCross = upperStair.runAxis === "vertical" ? upperBox.width : upperBox.height;
+    const lowerCross = upperStair.runAxis === "vertical" ? match.box.width : match.box.height;
+    const widthRatio = Math.max(upperCross, lowerCross) / Math.max(1e-6, Math.min(upperCross, lowerCross));
+    if (widthRatio > 1.3) continue;
     // Align only the cross-axis (the shaft position visible in the slab opening)
     // from the upper floor. Preserve the lower floor's own run-axis extent so
     // that a ground-floor flight that spans more treads than the upper flight

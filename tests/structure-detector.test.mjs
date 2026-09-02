@@ -200,6 +200,38 @@ test("adjacent floors share the upper-floor stair shaft in analyser coordinates"
   assert.ok(Math.abs(lowerBox.width / lower.footprint.width - upperBox.width / upper.footprint.width) < 0.0001);
 });
 
+test("a winder keeps each floor's own stair width", () => {
+  // A turned stair sweeps wider at the top than the straight flight below it,
+  // so the two plans show different widths on purpose. Squaring them off would
+  // report both floors with the same box and lose the turn.
+  const lower = {
+    regionId: "lower",
+    sourceWidth: 320,
+    sourceHeight: 620,
+    walls: [],
+    outdoorAreas: [],
+    stairs: [{ id: "lower-stair", runAxis: "vertical", x: 155, y: 364, width: 37, height: 68, stepCount: 16, confidence: 0.78 }],
+    footprint: { x: 52, y: 356, width: 227, height: 184 },
+    roomCount: 0,
+    confidence: 0.8,
+    diagnostics: { threshold: 0, wallThickness: 6, geometryVotes: 0, topologyVotes: 0, openingVotes: 0, stairVotes: 1 },
+  };
+  const upper = {
+    ...lower,
+    regionId: "upper",
+    stairs: [{ id: "upper-stair", runAxis: "vertical", x: 139, y: 31, width: 53, height: 61, stepCount: 13, confidence: 0.82 }],
+    footprint: { x: 52, y: 23, width: 226, height: 186 },
+  };
+  const regions = [
+    { id: "lower", name: "Ground floor", x: 0, y: 0.5, width: 1, height: 0.5, confidence: 0.8 },
+    { id: "upper", name: "First floor", x: 0, y: 0, width: 1, height: 0.5, confidence: 0.8 },
+  ];
+  const aligned = alignAdjacentStairStructures(regions, { lower, upper });
+  assert.equal(aligned.lower.stairs[0].width, 37, "the flight keeps its own width");
+  assert.equal(aligned.lower.stairs[0].x, 155, "and its own position");
+  assert.equal(aligned.upper.stairs[0].width, 53, "the winder keeps its wider sweep");
+});
+
 test("a right-hand flight expands left across connected return-flight evidence", () => {
   const width = 240;
   const height = 190;
