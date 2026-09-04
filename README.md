@@ -14,9 +14,10 @@ This repository currently contains the first product vertical slice:
 - metric scene entities for levels, walls and openings;
 - a touch-enabled Three.js viewer with true door and window gaps;
 - local project persistence and JSON backup;
+- secret-link live collaboration backed by a per-apartment Durable Object;
 - a mobile-accessible GitHub Pages deployment.
 
-The trained semantic CV pipeline, arbitrary-geometry correction, scale calibration, and cross-device project sync are future milestones. The current project identifies its analyser as a browser-based geometry/topology fallback rather than presenting it as a trained model.
+The trained semantic CV pipeline, arbitrary-geometry correction, account-based ownership, and cross-device room discovery are future milestones. The current project identifies its analyser as a browser-based geometry/topology fallback rather than presenting it as a trained model.
 
 ## Local development
 
@@ -39,6 +40,10 @@ npm test
 
 The browser currently owns image analysis, responsive review, local persistence, and derived 3D rendering. The canonical model stores editable building structure, not meshes. A future Python/GPU service can add semantic proposals without replacing the geometry/topology validator or the canonical document.
 
+Live collaboration is the only server-backed feature. The static application stays on GitHub Pages, while `collaboration-worker/` provides persistent shared rooms and hibernating WebSockets through Cloudflare Durable Objects. Source floorplan images are removed before room creation. The edit capability lives in the collaboration link fragment and is never sent as part of an ordinary page request.
+
+The production collaboration endpoint is `https://planform-collaboration.cocoscraper-app.workers.dev`. Set `VITE_COLLABORATION_URL` to override it for another deployment.
+
 The website is built with React, TypeScript, React Three Fiber and Three.js. The same client application has two build targets while the hosting migration is in progress: vinext for the existing Sites deployment and a static Vite bundle for GitHub Pages.
 
 ## GitHub Pages
@@ -50,6 +55,13 @@ npm run validate:pages
 ```
 
 The generated site lives in `pages-dist/`. GitHub Actions validates and deploys that directory on every push to `main`. The default project path is `/floorplan3D/`; set `PAGES_BASE_PATH=/` when moving to a custom domain.
+
+The public `VITE_COLLABORATION_URL` build variable points the static client at the collaboration Worker. Deploy that service with:
+
+```bash
+npm run check:collaboration-worker
+npm run deploy:collaboration
+```
 
 ## Regression fixtures
 

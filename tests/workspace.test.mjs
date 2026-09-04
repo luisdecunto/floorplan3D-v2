@@ -84,6 +84,14 @@ test("opening a different project clears session history", () => {
   assert.deepEqual(state.past, []);
   assert.equal(workspaceReducer(state, { type: "undo" }), state);
 });
+test("a synchronized room revision replaces stale local undo history", () => {
+  const original = { kind: "project", document: project() };
+  const edited = withFurnishings(original, [draft]);
+  const synchronized = withFurnishings(original, [{ ...draft, id: "partner-chair" }]);
+  const state = workspaceReducer({ present: edited, past: [original] }, { type: "sync", snapshot: synchronized });
+  assert.equal(state.present, synchronized);
+  assert.deepEqual(state.past, []);
+});
 test("undo marks the restored project as the most recently updated save", () => {
   const previous = { kind: "project", document: { ...project(), updatedAt: "2000-01-01T00:00:00.000Z" } };
   const result = workspaceReducer({ present: withFurnishings(previous, [draft]), past: [previous] }, { type: "undo" });

@@ -11,10 +11,12 @@ export type WorkspaceHistory = { present: WorkspaceSnapshot; past: WorkspaceSnap
 export type WorkspaceAction =
   | { type: "open"; snapshot: WorkspaceSnapshot }
   | { type: "commit"; snapshot: WorkspaceSnapshot }
+  | { type: "sync"; snapshot: WorkspaceSnapshot }
   | { type: "undo" };
 
 export function workspaceReducer(state: WorkspaceHistory, action: WorkspaceAction): WorkspaceHistory {
   if (action.type === "open") return { present: action.snapshot, past: [] };
+  if (action.type === "sync") return { present: action.snapshot, past: [] };
   if (action.type === "commit") {
     if (action.snapshot === state.present) return state;
     return { present: action.snapshot, past: [...state.past.slice(-39), state.present] };

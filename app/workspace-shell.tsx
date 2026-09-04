@@ -2,8 +2,9 @@ import { Plus, ScanLine, Undo2, MoreHorizontal, Maximize2, Box, Map, Ruler, Hous
 import type { ReactNode } from "react";
 import type { Level } from "./scene-data";
 
-export function WorkspaceShell({ name, saveStatus, levels, activeLevel, onFloor, view, onView, wholeBuilding, onWholeBuilding, wallCutaway, onWallCutaway, onFit, onMenu, onAdd, onReview, onUndo, canUndo, needsScale, reviewing, panelOpen, children, panels, context, notice, clearNotice }: {
+export function WorkspaceShell({ name, saveStatus, collaboration, levels, activeLevel, onFloor, view, onView, wholeBuilding, onWholeBuilding, wallCutaway, onWallCutaway, onFit, onMenu, onAdd, onReview, onUndo, canUndo, needsScale, reviewing, panelOpen, children, panels, context, notice, clearNotice }: {
   name: string; saveStatus: string; levels: Level[]; activeLevel: string; onFloor: (id: string) => void;
+  collaboration: { status: "idle" | "connecting" | "live" | "reconnecting" | "error"; people: number } | null;
   view: "perspective" | "top"; onView: (view: "perspective" | "top") => void;
   wholeBuilding: boolean; onWholeBuilding: (show: boolean) => void;
   wallCutaway: number; onWallCutaway: (height: number) => void;
@@ -12,7 +13,7 @@ export function WorkspaceShell({ name, saveStatus, levels, activeLevel, onFloor,
   children: ReactNode; panels: ReactNode; context: ReactNode; notice: string; clearNotice: () => void;
 }) {
   return <main className={"ws-app" + (panelOpen ? " has-panel" : "") + (reviewing ? " is-reviewing" : "")}>
-    <header className="ws-header"><span className="ws-logo" aria-label="Planform"><Box size={24} /></span><div className="ws-project-title"><h1>{name}</h1><span role="status">{saveStatus}</span></div><button className="ws-icon" onClick={onMenu} aria-label="Project menu"><MoreHorizontal size={22} /></button></header>
+    <header className="ws-header"><span className="ws-logo" aria-label="Planform"><Box size={24} /></span><div className="ws-project-title"><h1>{name}</h1><span role="status">{collaboration ? <><i className={`ws-live-dot ${collaboration.status}`} />{collaboration.status === "live" ? `Live · ${collaboration.people}` : collaboration.status === "reconnecting" ? "Reconnecting…" : "Connecting…"}</> : saveStatus}</span></div><button className="ws-icon" onClick={onMenu} aria-label="Project menu"><MoreHorizontal size={22} /></button></header>
     <div className="ws-toolbar">
       <label className="ws-floor"><span className="visually-hidden">Active floor</span><select value={activeLevel} onChange={(event) => onFloor(event.target.value)}>{levels.map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}</select></label>
       {!reviewing && <div className="ws-view-switch" role="group" aria-label="Camera view"><button onClick={() => onView("perspective")} aria-pressed={view === "perspective"}><Box size={16} />3D</button><button onClick={() => onView("top")} aria-pressed={view === "top"}><Map size={16} />Top</button></div>}

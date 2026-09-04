@@ -24,6 +24,12 @@
 .ws-project-title { flex: 1; min-width: 0; }
 .ws-project-title h1 { font-size: 16px; line-height: 1.3; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-weight: 600; }
 .ws-project-title > span { color: #64736a; font-size: 12px; }
+.ws-project-title > span { display: flex; align-items: center; gap: 5px; }
+.ws-live-dot { display: inline-block; width: 9px; height: 9px; border-radius: 999px; background: #d09a32; flex: 0 0 auto; }
+.ws-live-dot.live { background: #249b5b; box-shadow: 0 0 0 3px #249b5b1c; }
+.ws-live-dot.reconnecting, .ws-live-dot.connecting { animation: ws-live-pulse 1.2s ease-in-out infinite; }
+.ws-live-dot.error { background: #b84a42; }
+@keyframes ws-live-pulse { 50% { opacity: .35; } }
 .ws-app .ws-icon { min-width: 44px; width: 44px; height: 44px; padding: 8px; flex-shrink: 0; background: transparent; border-color: transparent; }
 .ws-toolbar { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 6px max(12px, env(safe-area-inset-left)); flex-shrink: 0; background: #f6f5ef; }
 .ws-toolbar .ws-floor { flex: 1; min-width: 0; max-width: 240px; margin: 0 auto 0 0; }
@@ -102,6 +108,9 @@
 .ws-adjustments > div { margin-left: auto; }
 .ws-menu-actions { display: flex; flex-direction: column; gap: 8px; }
 .ws-menu-actions button { justify-content: flex-start; }
+.ws-live-card { display: flex; align-items: center; gap: 10px; padding: 12px; margin-bottom: 12px; border: 1px solid #cfe1d4; background: #f2f8f3; border-radius: 12px; }
+.ws-live-card > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.ws-live-card small { color: #64736a; }
 .ws-plan-controls form { margin: 12px 0; }
 .ws-measure { background: #f0f4eb; padding: 12px; border-radius: 12px; }
 .ws-app .ws-measure label { margin-top: 0; }
