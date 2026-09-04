@@ -2,6 +2,8 @@
 
 Planform turns ordinary floorplan files into a structured, multi-level 3D digital twin that can be reviewed and explored from desktop or mobile.
 
+[Open the live planner](https://luisdecunto.github.io/floorplan3D-v2/)
+
 For a detailed description of the current image-analysis rules, confidence hierarchy, user corrections, and 3D generation mechanism, see the [compiled algorithms report](output/pdf/planform_v2_algorithms_report.pdf), its [LaTeX source](docs/planform_algorithms_report.tex), or the shorter [rules reference](docs/HOW_PLANFORM_WORKS.md).
 
 This repository currently contains the first product vertical slice:
