@@ -8,6 +8,7 @@ import react from "@vitejs/plugin-react";
 // Compile the real TSX component without a browser or a listening HTTP server.
 const server = await createServer({
   root: fileURLToPath(new URL("../", import.meta.url)), configFile: false,
+  cacheDir: fileURLToPath(new URL("../node_modules/.vite-workspace-shell", import.meta.url)),
   plugins: [react()], optimizeDeps: { noDiscovery: true, include: [] },
   server: { middlewareMode: true, watch: null, ws: false }, appType: "custom",
 });

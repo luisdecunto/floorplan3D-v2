@@ -9,7 +9,7 @@ import { Box3, BoxGeometry, CylinderGeometry, Matrix4, Vector3, Euler, Quaternio
 import { RETAIL_FURNITURE_CATALOG } from "../app/retail-furniture-catalog.ts";
 import { BOOKSHELF_CATALOG } from "../app/bookshelf-catalog.ts";
 
-const server = await createServer({ root: fileURLToPath(new URL("../", import.meta.url)), configFile: false, plugins: [react()], optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, watch: null, ws: false }, appType: "custom" });
+const server = await createServer({ root: fileURLToPath(new URL("../", import.meta.url)), configFile: false, cacheDir: fileURLToPath(new URL("../node_modules/.vite-furniture-model", import.meta.url)), plugins: [react()], optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, watch: null, ws: false }, appType: "custom" });
 after(() => server.close());
 const { ProceduralFurniture } = await server.ssrLoadModule("/app/furniture-model.tsx");
 const { FurnitureLibrary } = await server.ssrLoadModule("/app/furniture-library.tsx");
