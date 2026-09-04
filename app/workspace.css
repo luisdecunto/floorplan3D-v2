@@ -1,0 +1,162 @@
+/* Mobile workspace: one canvas, one contextual panel, no screen-size modes. */
+.ws-app, .ws-start { --ws-accent: #23675c; --ws-border: #dedfd8; --ws-surface: #fffefa; color: #24352e; font-size: 16px; line-height: 1.45; }
+.ws-app button, .ws-start button { min-height: 44px; border: 1px solid var(--ws-border); border-radius: 10px; background: var(--ws-surface); padding: 9px 14px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: 14px; line-height: 1.25; font-weight: 600; cursor: pointer; touch-action: manipulation; }
+.ws-app button:disabled { opacity: .4; cursor: not-allowed; }
+.ws-app button:hover:not(:disabled), .ws-start button:hover { border-color: #23675c; background: #f0f4ee; }
+.ws-app .ws-primary, .ws-start .ws-primary { background: var(--ws-accent); border-color: var(--ws-accent); color: #fff; }
+.ws-app .ws-primary:hover:not(:disabled), .ws-start .ws-primary:hover { background: #194e45; color: #fff; }
+.ws-app button:focus-visible, .ws-app input:focus-visible, .ws-app select:focus-visible, .ws-app summary:focus-visible, .ws-start button:focus-visible { outline: 3px solid #78b8a8; outline-offset: 3px; }
+.ws-app h1, .ws-app h2, .ws-app h3, .ws-start h1, .ws-start p { margin: 0; }
+.ws-app h2 { font-size: 20px; font-weight: 650; letter-spacing: -.03em; }
+.ws-app h3 { margin: 22px 0 12px; font-size: 16px; }
+.ws-app p { margin: 12px 0; }
+.ws-app label { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; font-size: 14px; font-weight: 600; }
+.ws-app input:not([type=checkbox]), .ws-app select { width: 100%; min-height: 44px; min-width: 0; background: var(--ws-surface); border: 1px solid var(--ws-border); border-radius: 8px; padding: 8px 10px; color: #24352e; font-size: 16px; }
+.ws-app .ws-check { flex-direction: row; align-items: center; gap: 10px; min-height: 44px; font-weight: 400; }
+.ws-app input[type=checkbox] { width: 21px; height: 21px; accent-color: var(--ws-accent); flex-shrink: 0; }
+.ws-app summary { min-height: 44px; padding: 12px 0; cursor: pointer; font-size: 14px; font-weight: 600; }
+.ws-app details { border-top: 1px solid var(--ws-border); margin-top: 14px; }
+.ws-app details p, .ws-muted { color: #626f68; font-size: 14px; }
+.ws-app a { color: var(--ws-accent); text-decoration: underline; }
+.ws-app { height: 100vh; height: 100dvh; width: 100%; overflow: hidden; display: flex; flex-direction: column; background: #ebe9e1; padding-top: env(safe-area-inset-top); }
+.ws-header { background: var(--ws-surface); display: flex; align-items: center; gap: 10px; padding: 8px max(12px, env(safe-area-inset-left)); border-bottom: 1px solid var(--ws-border); flex-shrink: 0; min-height: 64px; }
+.ws-logo { border: 1px solid #dbe2d9; border-radius: 10px; background: #eff2e9; width: 40px; height: 40px; display: grid; place-items: center; flex-shrink: 0; }
+.ws-project-title { flex: 1; min-width: 0; }
+.ws-project-title h1 { font-size: 16px; line-height: 1.3; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-weight: 600; }
+.ws-project-title > span { color: #64736a; font-size: 12px; }
+.ws-app .ws-icon { min-width: 44px; width: 44px; height: 44px; padding: 8px; flex-shrink: 0; background: transparent; border-color: transparent; }
+.ws-toolbar { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 6px max(12px, env(safe-area-inset-left)); flex-shrink: 0; background: #f6f5ef; }
+.ws-toolbar .ws-floor { flex: 1; min-width: 0; max-width: 240px; margin: 0 auto 0 0; }
+.ws-toolbar .ws-floor select { font-size: 14px; border-color: transparent; background: transparent; padding-left: 0; }
+.ws-view-switch { display: flex; padding: 3px; background: #e8ece4; border-radius: 12px; }
+.ws-view-switch button { min-height: 38px; padding: 8px 11px; background: transparent; border: 0; }
+.ws-view-switch button[aria-pressed=true] { background: #fffefa; box-shadow: 0 1px 4px #21372b14; }
+.ws-workarea { min-height: 0; flex: 1; display: flex; flex-direction: column; position: relative; }
+.ws-stage { min-height: 100px; min-width: 0; position: relative; flex: 1; overflow: hidden; }
+.ws-viewer, .ws-plan-stage { position: absolute; inset: 0; }
+.ws-app .twin-canvas { height: 100%; width: 100%; min-height: 0; }
+.ws-app .twin-canvas canvas { touch-action: none; }
+.ws-app .viewer-loading { height: 100%; min-height: 0; padding: 24px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+.ws-scale-reminder { position: absolute; top: 12px; left: 12px; box-shadow: 0 3px 15px #21372b0d; }
+.ws-notice { position: absolute; bottom: 12px; left: 12px; right: 12px; max-width: 500px; margin: auto; border: 1px solid #ccd9ce; background: #fffffff2; backdrop-filter: blur(10px); padding: 3px 6px 3px 12px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; box-shadow: 0 6px 24px #21372b14; }
+.ws-notice button { background: transparent; border: 0; font-size: 22px; }
+.ws-panels { flex: 0 0 auto; min-height: 0; background: var(--ws-surface); z-index: 4; }
+.ws-panel { height: min(45dvh, 480px); display: flex; flex-direction: column; max-height: calc(100dvh - 300px); border-top: 1px solid var(--ws-border); border-radius: 18px 18px 0 0; background: var(--ws-surface); box-shadow: 0 -5px 20px #24352e08; }
+.ws-panel.expanded { height: 70dvh; }
+.ws-panel[hidden] { display: none !important; }
+.ws-app .ws-sheet-handle { min-height: 24px; height: 24px; width: 100%; padding: 3px; background: transparent; border: 0; touch-action: none; border-radius: 0; color: #7a8b7f; }
+.ws-sheet-handle span { height: 4px; width: 36px; border-radius: 3px; background: #c7cec4; }
+.ws-sheet-handle svg { position: absolute; right: 20px; }
+.ws-panel-heading { padding: 0 12px 6px 18px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.ws-panel-heading h2:focus { outline: none; }
+.ws-panel-body { padding: 0 16px 16px; overflow-y: auto; min-height: 0; overscroll-behavior: contain; scrollbar-width: thin; }
+.ws-bottom { border-top: 1px solid var(--ws-border); flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 8px max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)); background: var(--ws-surface); }
+.ws-bottom button { flex: 1; border-color: transparent; padding: 9px 8px; white-space: nowrap; }
+.ws-bottom .ws-add { background: var(--ws-accent); color: white; flex: 1.5; }
+.ws-bottom .ws-add:hover { background: #194e45 !important; }
+.ws-bottom button:last-child { flex: .7; }
+.ws-bottom button[aria-pressed=true] { background: #eaf1e9; color: #23675c; }
+.ws-app .ws-search { position: relative; margin: 0 0 10px; display: flex; flex-direction: row; align-items: center; gap: 8px; border: 1px solid var(--ws-border); padding: 0 10px; border-radius: 10px; }
+.ws-app .ws-search input { border: 0; padding-left: 0; background: transparent; }
+.ws-categories { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+.ws-categories button { border-radius: 20px; flex-shrink: 0; min-height: 44px; padding: 8px 15px; font-weight: 500; }
+.ws-categories button[aria-pressed=true] { background: #e3eee3; color: #215343; border-color: #c1d6c6; }
+.ws-app .ws-library-count { font-size: 12px; color: #65746a; margin: 7px 0 12px; }
+.ws-product-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ws-product { min-width: 0; border: 1px solid #e0e3da; border-radius: 12px; overflow: hidden; }
+.ws-product > button { width: 100%; min-width: 0; padding: 0 10px 8px; display: flex; flex-direction: column; align-items: flex-start; justify-content: start; gap: 4px; text-align: left; border: 0; border-radius: 0; font-weight: 400; }
+.ws-product img { display: block; width: calc(100% + 20px); max-width: none; height: auto; aspect-ratio: 10 / 7; margin: 0 -10px 5px; background: #f3f3ec; object-fit: contain; }
+.ws-product-brand { font-size: 10px; text-transform: uppercase; color: #718075; letter-spacing: .05em; overflow-wrap: anywhere; }
+.ws-product strong { font-size: 14px; line-height: 1.35; font-weight: 600; overflow-wrap: anywhere; }
+.ws-dimensions { font-size: 12px; line-height: 1.5; color: #596c61; }
+.ws-product-action { color: #23675c; width: 100%; display: flex; justify-content: space-between; align-items: center; padding-top: 8px; font-size: 13px; }
+.ws-product-action span { font-size: 22px; line-height: 1; }
+.ws-product details { margin: 0; padding: 0 10px; }
+.ws-product summary { font-size: 12px; color: #66766b; }
+.ws-product details p { font-size: 12px; }
+.ws-product a { display: inline-block; min-height: 44px; font-size: 14px; padding: 10px 0; }
+.ws-context { border-top: 1px solid var(--ws-border); border-radius: 18px 18px 0 0; padding: 12px 16px 8px; max-height: 44dvh; overflow-y: auto; background: var(--ws-surface); }
+.ws-context-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ws-context-title > div { display: flex; flex-direction: column; min-width: 0; }
+.ws-context-title small { font-size: 10px; color: #567962; letter-spacing: .1em; }
+.ws-context-title strong { font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; font-weight: 600; }
+.ws-app .ws-placement-hint { font-size: 13px; color: #586e62; margin: 6px 0 10px; }
+.ws-context.invalid .ws-placement-hint { color: #ad3632; }
+.ws-context-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.ws-context-actions .ws-primary { margin-left: auto; min-width: 96px; }
+.ws-precision { margin-top: 8px !important; }
+.ws-precision summary { color: #64776a; min-height: 36px; padding: 8px 0; font-size: 12px; }
+.ws-adjustments, .ws-adjustments > div, .ws-button-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.ws-adjustments > div { margin-left: auto; }
+.ws-menu-actions { display: flex; flex-direction: column; gap: 8px; }
+.ws-menu-actions button { justify-content: flex-start; }
+.ws-plan-controls form { margin: 12px 0; }
+.ws-measure { background: #f0f4eb; padding: 12px; border-radius: 12px; }
+.ws-app .ws-measure label { margin-top: 0; }
+.ws-issues { padding-left: 20px; font-size: 14px; color: #6d6750; }
+.ws-issues li { margin-bottom: 8px; }
+.ws-scale-status { font-size: 13px; color: #67795d; }
+.ws-app .plan-review { height: 100%; min-height: 0; width: 100%; padding: 0; }
+.ws-app .plan-viewport { min-height: 0; }
+.ws-app .focus-legend { display: none; }
+.ws-app .plan-review.focused { display: block; }
+.ws-app .plan-review.focused .plan-viewport { width: 100%; height: 100%; }
+.ws-app .detection-legend { display: none; }
+.ws-plan-tools { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; z-index: 6; }
+.ws-plan-tools button { background: #fffffff0; min-width: 44px; padding: 8px; }
+.ws-app .viewer-legend { bottom: 12px; left: 12px; right: 12px; max-width: 480px; flex-wrap: wrap; font-size: 11px; pointer-events: none; }
+.ws-start { min-height: 100vh; min-height: 100dvh; display: flex; justify-content: center; align-items: center; background: radial-gradient(ellipse at 85% 12%, #dfe9d7 0%, transparent 60%), #f7f6ef; padding: max(30px, env(safe-area-inset-top)) 24px max(30px, env(safe-area-inset-bottom)); }
+.ws-start-card { width: min(100%, 440px); }
+.ws-wordmark { font-weight: 700; letter-spacing: .14em; display: flex; align-items: center; gap: 10px; font-size: 14px; margin-bottom: 56px; }
+.ws-start .ws-eyebrow { text-transform: uppercase; font-size: 10px; letter-spacing: .13em; color: #6d7e65; margin-bottom: 12px; }
+.ws-start h1 { font-weight: 500; font-size: clamp(38px, 9vw, 54px); letter-spacing: -.05em; line-height: 1.05; margin-bottom: 20px; }
+.ws-start p { color: #647163; line-height: 1.6; margin-bottom: 25px; }
+.ws-start-upload { width: 100%; min-height: 52px !important; font-size: 16px !important; }
+.ws-start-secondary { display: flex; gap: 8px; margin-top: 10px; }
+.ws-start-secondary button { flex: 1; background: transparent; min-height: 50px; }
+.ws-start .ws-continue { width: 100%; justify-content: space-between; padding: 14px; margin-bottom: 12px; text-align: left; background: #eef3e9; border-color: #cbdac5; }
+.ws-continue > span { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ws-continue small { font-size: 13px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 300px; }
+.ws-start .ws-privacy { margin-top: 28px; margin-bottom: 0; text-align: center; font-size: 12px; }
+.ws-start .ws-start-error { color: #af4135; margin-top: 16px; font-size: 14px; }
+.ws-start progress { width: 100%; height: 6px; accent-color: #23675c; margin-bottom: 20px; }
+@media (min-width: 900px) {
+  .ws-header { padding: 10px 24px; }
+  .ws-toolbar { padding: 8px 24px; }
+  .ws-workarea { flex-direction: row; }
+  .ws-app.has-panel .ws-panels { width: 370px; border-left: 1px solid var(--ws-border); }
+  .ws-panel, .ws-panel.expanded { height: 100%; max-height: none; border: 0; border-radius: 0; box-shadow: none; padding-top: 10px; }
+  .ws-app .ws-sheet-handle { display: none; }
+  .ws-panel-body { padding: 0 20px 20px; }
+  .ws-panel-heading { padding-left: 20px; }
+  .ws-bottom { padding: 10px 24px; gap: 12px; }
+  .ws-bottom button, .ws-bottom button:last-child, .ws-bottom .ws-add { flex: 0 0 auto; min-width: 100px; }
+  .ws-context { border-radius: 0; border-top: 0; max-height: 100%; padding: 20px; }
+  .ws-project-title h1 { max-width: 560px; }
+}
+@media (max-height: 520px) and (min-width: 600px) and (max-width: 899px) and (orientation: landscape) {
+  .ws-header { min-height: 48px; padding-top: 2px; padding-bottom: 2px; }
+  .ws-toolbar { min-height: 48px; padding-top: 2px; padding-bottom: 2px; }
+  .ws-workarea { flex-direction: row; }
+  .ws-app.has-panel .ws-panels { width: 42%; border-left: 1px solid var(--ws-border); }
+  .ws-panel, .ws-panel.expanded { height: 100%; max-height: none; }
+  .ws-app .ws-sheet-handle { display: none; }
+  .ws-context { max-height: 100%; }
+  .ws-bottom { padding-top: 4px; padding-bottom: max(4px, env(safe-area-inset-bottom)); }
+}
+/* A phone keyboard can make its viewport wider than tall. Do not turn that
+   into a narrow landscape sidebar; reserve enough space for the search field. */
+@media (max-height: 600px) and (max-width: 599px) {
+  .ws-stage { min-height: 60px; }
+  .ws-panel { max-height: calc(100dvh - 240px); }
+}
+@media (max-width: 360px) {
+  .ws-bottom button { font-size: 12px; gap: 4px; }
+  .ws-bottom button:last-child span { display: none; }
+  .ws-view-switch button { padding-left: 8px; padding-right: 8px; }
+  .ws-product-grid { gap: 8px; }
+  .ws-context-actions { gap: 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ws-app *, .ws-start * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

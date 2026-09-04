@@ -40,11 +40,25 @@ test("GitHub Pages bundle includes wall-safe furniture editing controls", async 
   const javascript = (await Promise.all(scripts.map((entry) => readFile(new URL(entry, assetDirectory), "utf8")))).join("\n");
 
   assert.match(javascript, /Snap to 10 cm grid/);
-  assert.match(javascript, /Move through it, then release on a clear area/);
+  assert.match(javascript, /Ready to place/);
+  assert.match(javascript, /PREVIEW · NOT SAVED/);
+  assert.match(javascript, /Saved on this device/);
+  assert.doesNotMatch(javascript, /fetch\("\/api\/share/);
   assert.match(javascript, /Mirror furniture/);
   assert.match(javascript, /Delete furniture/);
   assert.match(javascript, /FRIHETEN corner sofa-bed/);
   assert.match(javascript, /MALM high bed frame/);
   assert.match(javascript, /LISABO dining table/);
   assert.match(javascript, /TEODORES chair/);
+});
+
+test("all furniture previews are static local SVGs and test harness is not deployed", async () => {
+  const previews = await readdir(new URL("furniture-previews/", outputDirectory));
+  assert.equal(previews.filter((file) => file.endsWith(".svg")).length, 47);
+  assert.ok(!(await readdir(outputDirectory)).includes("qa.html"));
+  for (const file of previews) {
+    const svg = await readFile(new URL("furniture-previews/" + file, outputDirectory), "utf8");
+    assert.match(svg, /<polygon/);
+    assert.doesNotMatch(svg, /<script|href=|foreignObject/);
+  }
 });

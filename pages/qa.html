@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Planform responsive QA (development only)</title>
+<style>body{font:16px system-ui;background:#d7dcd5;margin:12px}header{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}button{padding:10px;min-height:44px}iframe{border:0;background:white;display:block;box-shadow:0 4px 24px #0002;max-width:none}label{display:flex;gap:8px;align-items:center}</style></head>
+<body><header><strong>Responsive QA</strong><button data-size="390,844">Phone portrait</button><button data-size="844,390">Phone landscape</button><button data-size="768,1024">Tablet</button><button data-size="1280,800">Desktop</button><span id="size">390 × 844</span></header>
+<div style="display:flex;gap:12px"><iframe title="Planform test viewport" width="390" height="844" src="./" style="transform:scale(.72);transform-origin:top left;flex-shrink:0"></iframe><aside style="max-width:460px"><button id="seed">Load regression project</button><button id="checks">Run workspace checks</button><button id="intake">Test automatic image analysis</button><pre id="report" style="white-space:pre-wrap"></pre></aside></div>
+<script type="module">import "../tests/workspace-browser.ts";</script></body></html>

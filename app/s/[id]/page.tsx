@@ -66,9 +66,19 @@ export default function SharePage({ params }: { params: { id: string } }) {
             levels={levels.length > 0 ? levels : sampleLevels}
             exploded={false}
             furnishings={document.furnishings ?? []}
-            onMoveFurnishing={() => undefined}
+            gridSnapEnabled={false}
+            onCommitMoveFurnishing={() => undefined}
+            onPreviewMoveFurnishing={(_id, x, z) => ({ position: { x, z }, collision: null })}
             onSelectFurnishing={() => undefined}
             selectedFurnishingId={null}
+            activeLevel={(levels[0] ?? sampleLevels[0]).id}
+            view="perspective"
+            fitRequest={0}
+            active
+            draft={null}
+            draftCollision={null}
+            onDraftPosition={() => undefined}
+            showLegend={false}
             wallCutaway={1}
             visibleLevels={new Set((levels.length > 0 ? levels : sampleLevels).map((l) => l.id))}
           />

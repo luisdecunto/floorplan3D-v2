@@ -1,6 +1,6 @@
 import type { SourceRegion } from "./plan-regions";
 import type { Fixture, Level, Opening, OutdoorArea, Room, Stair, Wall } from "./scene-data";
-import { detectFurniture, type DetectorWall, type FixtureObstacle } from "./furniture-detector.ts";
+import { detectFurniture, type DetectedFixture, type DetectorWall, type FixtureObstacle } from "./furniture-detector.ts";
 export type { DetectedFixture } from "./furniture-detector.ts";
 
 export type Axis = "horizontal" | "vertical";

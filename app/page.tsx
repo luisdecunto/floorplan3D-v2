@@ -1,1863 +1,230 @@
 "use client";
-
-/* eslint-disable @next/next/no-img-element */
-
-import {
-  ArrowDown,
-  ArrowRight,
-  ArrowUp,
-  ArrowUpDown,
-  Armchair,
-  BedDouble,
-  Box,
-  Check,
-  ChevronLeft,
-  CircleHelp,
-  Download,
-  Eye,
-  EyeOff,
-  ExternalLink,
-  FlipHorizontal2,
-  Grid3X3,
-  ImageUp,
-  Layers3,
-  Maximize2,
-  Menu,
-  Minimize2,
-  MoreHorizontal,
-  Move,
-  Move3D,
-  Plus,
-  RotateCw,
-  Ruler,
-  ScanLine,
-  Search,
-  Share2,
-  ShieldCheck,
-  SlidersHorizontal,
-  Sofa,
-  Smartphone,
-  Sparkles,
-  Table2,
-  Trash2,
-  Undo2,
-  Upload,
-  X,
-} from "lucide-react";
-import { ChangeEvent, Component, lazy, type PointerEvent as ReactPointerEvent, ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import {
-  detectPlanRegions,
-  LEVEL_NAME_OPTIONS,
-  moveRegion,
-  resequenceRegions,
-  resizeRegion,
-  type SourceRegion,
-} from "./plan-regions";
-import { sampleLevels, type Level } from "./scene-data";
-import {
-  FURNITURE_CATALOG,
-  furnitureCatalogItem,
-  type FurnitureCatalogItem,
-  type FurniturePlacement,
-} from "./furniture-catalog";
-import {
-  findNearestValidFurniturePosition,
-  resolveFurnitureMove,
-  validFurniturePosition,
-  type FurnitureCollisionReason,
-  type FurnitureMoveResult,
-  type FurnitureObstacle,
-} from "./furniture-placement";
-import {
-  addDocumentOpening,
-  createFloorplanDocumentV2,
-  documentRegions,
-  documentStructures,
-  realignDocumentStairs,
-  removeDocumentWall,
-  setDocumentScale,
-  suggestBuildingOrder,
-  undoLastDocumentEdit,
-  type FloorplanDocumentV2,
-} from "./floorplan-document";
-import { downloadProject, loadLatestProjectLocally, parseProject, saveProjectLocally } from "./project-storage";
-import {
-  alignAdjacentStairStructures,
-  detectFloorStructures,
-  resolveScaleFromDoors,
-  structureToLevel,
-  type DetectedStructure,
-  type ProjectScale,
-} from "./structure-detector";
+/* eslint-disable jsx-a11y/no-noninteractive-tabindex -- The custom 3D application is a keyboard interaction surface with documented arrow/rotate/cancel bindings. */
+import "./workspace.css";
+import { Box, Upload, FolderOpen, ArrowRight, Download } from "lucide-react";
+import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { sampleLevels } from "./scene-data";
+import { furnitureCatalogItem, type FurnitureCatalogItem, type FurniturePlacement } from "./furniture-catalog";
+import { findNearestValidFurniturePosition, type FurnitureMoveResult } from "./furniture-placement";
+import { createFloorplanDocumentV2, documentRegions, documentStructures, documentSceneLevels, type FloorplanDocumentV2 } from "./floorplan-document";
+import { downloadProject, parseProject } from "./project-storage";
+import { inspectFloorplan } from "./floorplan-intake";
+import { useWorkspaceProject } from "./use-workspace-project";
+import { collisionDescription, confirmPlacement, placementObstacles, previewPlacement, projectFurnishings, withFurnishings } from "./workspace-state";
+import { WorkspaceShell } from "./workspace-shell";
+import { WorkspacePanel } from "./workspace-panel";
+import { FurnitureLibrary } from "./furniture-library";
+import { FurnitureControls } from "./furniture-controls";
+import { PlanControls } from "./plan-controls";
+import PlanReview from "./plan-review";
 
 const TwinViewer = lazy(() => import("./twin-viewer"));
-
-type AppStage = "welcome" | "analyzing" | "workspace";
-type ViewMode = "review" | "twin" | "furnish";
-type AnalysisSize = { width: number; height: number };
-type StructureMap = Record<string, DetectedStructure>;
-
-const sampleRegions: SourceRegion[] = [
-  { id: "ground", name: "Ground floor", x: 0.05, y: 0.14, width: 0.42, height: 0.68, confidence: 0.96 },
-  { id: "upper", name: "First floor", x: 0.53, y: 0.14, width: 0.42, height: 0.68, confidence: 0.91 },
-];
-
-function sleep(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-async function loadImage(url: string) {
-  const image = new Image();
-  image.src = url;
-  await image.decode();
-  return image;
-}
-
-async function inspectFloorplan(url: string): Promise<{ regions: SourceRegion[]; structures: StructureMap; size: AnalysisSize; previewDataUrl?: string }> {
-  try {
-    const image = await loadImage(url);
-    // Preserve thin balcony rails and stair treads. At 900 px the browser's
-    // bilinear resize can erase these one-pixel signals in phone screenshots.
-    // 1280 px remains modest for mobile memory while retaining the structure.
-    const maxSide = 1280;
-    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
-    const width = Math.max(1, Math.round(image.naturalWidth * scale));
-    const height = Math.max(1, Math.round(image.naturalHeight * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) throw new Error("Canvas is unavailable");
-    context.drawImage(image, 0, 0, width, height);
-    const pixels = context.getImageData(0, 0, width, height).data;
-    let regions = detectPlanRegions(pixels, width, height);
-    let structures = detectFloorStructures(pixels, width, height, regions);
-    Object.values(structures).forEach((structure) => {
-      const cropX = Math.max(0, Math.floor(structure.footprint.x));
-      const cropY = Math.max(0, Math.floor(structure.footprint.y));
-      const cropWidth = Math.max(1, Math.min(width - cropX, Math.ceil(structure.footprint.width)));
-      const cropHeight = Math.max(1, Math.min(height - cropY, Math.ceil(structure.footprint.height)));
-      const floorCanvas = document.createElement("canvas");
-      floorCanvas.width = cropWidth;
-      floorCanvas.height = cropHeight;
-      const floorContext = floorCanvas.getContext("2d");
-      if (floorContext) {
-        floorContext.translate(-cropX, -cropY);
-        if (structure.sourceRotationDegrees && structure.rotationCenter) {
-          const [centerX, centerY] = structure.rotationCenter;
-          floorContext.translate(centerX, centerY);
-          floorContext.rotate(-structure.sourceRotationDegrees * Math.PI / 180);
-          floorContext.translate(-centerX, -centerY);
-        }
-        floorContext.drawImage(canvas, 0, 0);
-      }
-      structure.floorTextureUrl = floorCanvas.toDataURL("image/jpeg", 0.86);
-    });
-    regions = regions.map((region) => ({
-      ...region,
-      hasOutdoorArea: structures[region.id]?.outdoorAreas.length > 0,
-      confidence: structures[region.id]
-        ? Math.min(region.confidence, structures[region.id].confidence)
-        : region.confidence,
-    }));
-
-    // A rail-enclosed exterior platform is useful ordering evidence in a
-    // two-level plan: suggest the enclosed plan below the balcony level while
-    // retaining the explicit reverse/relabel controls for ambiguous cases.
-    regions = suggestBuildingOrder(regions, structures);
-    structures = alignAdjacentStairStructures(regions, structures);
-    return { regions, structures, size: { width, height }, previewDataUrl: canvas.toDataURL("image/jpeg", 0.9) };
-  } catch {
-    const regions = [{ id: "ground", name: "Floor 1", x: 0.03, y: 0.03, width: 0.94, height: 0.94, confidence: 0.42 }];
-    return { regions, structures: {}, size: { width: 1, height: 1 } };
-  }
-}
-
-function scaleLabel(scale: ProjectScale | undefined) {
-  if (!scale || scale.source === "provisional") return "Measurement needed";
-  if (scale.source === "user") return "Resolved (measured)";
-  return "Estimated (door width)";
-}
-
-function scaleHeadline(scale: ProjectScale | undefined) {
-  if (!scale || scale.source === "provisional") return "One measurement needed";
-  if (scale.source === "user") return "Scale verified";
-  return "Scale estimated from doors";
-}
-
-function scaleCopy(scale: ProjectScale | undefined, hasSelectedWall: boolean) {
-  if (!scale || scale.source === "provisional") return "Select a wall, then Measure and enter its real length.";
-  if (scale.source === "user") return "Dimensions use your measured wall length.";
-  return hasSelectedWall
-    ? "Dimensions are estimated from typical door widths. Press Measure to enter this wall's real length instead."
-    : "Dimensions are estimated from typical door widths, not measured. Select a wall to enter a real length instead.";
-}
-
-/**
- * Keeps a WebGL failure legible. Without this, anything thrown while building
- * the scene (a lost context, a driver refusing a texture, a bad asset) unmounts
- * the tree and leaves an empty stage with no indication of what went wrong —
- * which is indistinguishable from the viewer simply hanging.
- */
+type Panel = "catalogue" | "project" | "plan" | null;
 class ViewerBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  constructor(props: { children: ReactNode }) {
-    super(props);
-    this.state = { failed: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-
-  componentDidCatch(error: unknown) {
-    console.error("3D viewer failed to start", error);
-  }
-
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: unknown) { console.error("3D viewer failed", error); }
   render() {
-    if (this.state.failed) {
-      return (
-        <div className="viewer-loading viewer-failed">
-          <Box size={22} />
-          <span>The 3D view could not start on this device.</span>
-          <button onClick={() => this.setState({ failed: false })}>Try again</button>
-        </div>
-      );
-    }
-    return this.props.children;
+    return this.state.failed ? <div className="viewer-loading"><p>The 3D view could not start on this device. Your project is still available to export.</p><button onClick={() => this.setState({ failed: false })}>Retry 3D</button></div> : this.props.children;
   }
 }
-
-function buildPreviewLevels(regions: SourceRegion[], structures: StructureMap, sharedScale?: ProjectScale): Level[] {
-  return regions.map((region, index) => {
-    const detected = structures[region.id];
-    if (detected?.walls.length >= 3) return structureToLevel(detected, region, index, sharedScale);
-    const template = sampleLevels[Math.min(index, sampleLevels.length - 1)];
-    return {
-      ...template,
-      id: region.id,
-      name: region.name,
-      shortName: index === 0 ? "BASE" : `${index}F`,
-      elevation: index * 3.05,
-      detectionConfidence: region.confidence,
-    };
-  });
-}
-
 export default function Home() {
-  const [stage, setStage] = useState<AppStage>("welcome");
-  const [viewMode, setViewMode] = useState<ViewMode>("review");
-  const [file, setFile] = useState<File | null>(null);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [regions, setRegions] = useState<SourceRegion[]>(sampleRegions);
-  const [structures, setStructures] = useState<StructureMap>({});
-  const [analysisSize, setAnalysisSize] = useState<AnalysisSize | null>(null);
+  const { history, dispatch, project, lastProject, saveStatus } = useWorkspaceProject();
+  const [stage, setStage] = useState<"welcome" | "analyzing" | "workspace">("welcome");
+  const [phase, setPhase] = useState("Reading image…");
+  const [panel, setPanel] = useState<Panel>(null);
   const [activeLevel, setActiveLevel] = useState("ground");
   const [focusedLevel, setFocusedLevel] = useState<string | null>(null);
-  const [visibleLevels, setVisibleLevels] = useState(() => new Set(["ground", "upper"]));
+  const [selectedWall, setSelectedWall] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<FurniturePlacement | null>(null);
+  const [notice, setNotice] = useState("");
+  const [view, setView] = useState<"perspective" | "top">("perspective");
+  const [fitRequest, setFitRequest] = useState(0);
+  const [wholeBuilding, setWholeBuilding] = useState(false);
   const [exploded, setExploded] = useState(false);
-  const [wallCutaway, setWallCutaway] = useState(1);
-  const [analysisStep, setAnalysisStep] = useState(0);
-  const [mobilePanel, setMobilePanel] = useState<"levels" | "canvas" | "details">("canvas");
-  const [document, setDocument] = useState<FloorplanDocumentV2 | null>(null);
-  const [lastProject, setLastProject] = useState<FloorplanDocumentV2 | null>(null);
-  const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
-  const [furnishings, setFurnishings] = useState<FurniturePlacement[]>([]);
-  const [furnitureHistory, setFurnitureHistory] = useState<FurniturePlacement[][]>([]);
-  const [gridSnapEnabled, setGridSnapEnabled] = useState(true);
-  const [selectedFurnishingId, setSelectedFurnishingId] = useState<string | null>(null);
-  const [projectMessage, setProjectMessage] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const projectInputRef = useRef<HTMLInputElement>(null);
-
+  const [wallCutaway, setWallCutaway] = useState(0.32);
+  const [gridSnap, setGridSnap] = useState(true);
+  const [showGrid, setShowGrid] = useState(false);
+  const [showLegend, setShowLegend] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const projectInput = useRef<HTMLInputElement>(null);
+  const intakeGeneration = useRef(0);
+  const intakeAbort = useRef<AbortController | null>(null);
+  const editor = useRef<HTMLDivElement>(null);
+  const furnishings = useMemo(() => projectFurnishings(history.present), [history.present]);
+  const levels = useMemo(() => project ? documentSceneLevels(project) : sampleLevels, [project]);
+  const regions = useMemo(() => project ? documentRegions(project) : [], [project]);
+  const structures = useMemo(() => project ? documentStructures(project) : {}, [project]);
+  const floor = levels.find((level) => level.id === activeLevel) ?? levels[0];
+  const visibleLevels = useMemo(() => new Set(wholeBuilding ? levels.map((level) => level.id) : [activeLevel]), [wholeBuilding, levels, activeLevel]);
+  const selected = furnishings.find((placement) => placement.id === selectedId) ?? null;
+  const editing = draft ?? selected;
+  const draftPreview = draft && floor ? previewPlacement(draft, floor, furnishings, gridSnap) : null;
+  const reviewing = panel === "plan";
   useEffect(() => {
-    return () => {
-      if (imageUrl) URL.revokeObjectURL(imageUrl);
-    };
-  }, [imageUrl]);
+    if (editing?.id && !panel) editor.current?.focus({ preventScroll: true });
+  }, [editing?.id, panel]);
 
-  useEffect(() => {
-    loadLatestProjectLocally().then(setLastProject).catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
-    if (!document) return;
-    const timeout = window.setTimeout(() => {
-      saveProjectLocally(document)
-        .then(() => setLastProject(document))
-        .catch(() => setProjectMessage("Local save is unavailable in this browser."));
-    }, 220);
-    return () => window.clearTimeout(timeout);
-  }, [document]);
-
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      setDocument((project) => project ? {
-        ...project,
-        furnishings,
-        updatedAt: new Date().toISOString(),
-      } : project);
-    }, 120);
-    return () => window.clearTimeout(timeout);
-  }, [furnishings]);
-
-  const doorScale = useMemo(() => resolveScaleFromDoors(structures) ?? undefined, [structures]);
-  const sharedScale = document?.scale.source === "user" ? document.scale : doorScale;
-  const previewLevels = buildPreviewLevels(regions, structures, sharedScale);
-  const selectedRegion = regions.find((region) => region.id === activeLevel) ?? regions[0];
-  const selectedLevel = previewLevels.find((level) => level.id === activeLevel) ?? previewLevels[0] ?? sampleLevels[0];
-
-  useEffect(() => {
-    if (stage !== "workspace" || viewMode !== "furnish" || !selectedFurnishingId) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("input, textarea, select, button")) return;
-      const key = event.key.toLowerCase();
-      if (["arrowleft", "arrowright", "arrowup", "arrowdown", "q", "e", "delete", "backspace"].includes(key)) {
-        event.preventDefault();
-      }
-      if (key === "arrowleft") nudgeFurnishing(selectedFurnishingId, -0.1, 0);
-      if (key === "arrowright") nudgeFurnishing(selectedFurnishingId, 0.1, 0);
-      if (key === "arrowup") nudgeFurnishing(selectedFurnishingId, 0, -0.1);
-      if (key === "arrowdown") nudgeFurnishing(selectedFurnishingId, 0, 0.1);
-      if (key === "q") rotateFurnishing(selectedFurnishingId, -1);
-      if (key === "e") rotateFurnishing(selectedFurnishingId, 1);
-      if (key === "m") mirrorFurnishing(selectedFurnishingId);
-      if (key === "delete" || key === "backspace") removeFurnishing(selectedFurnishingId);
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedFurnishingId, stage, viewMode, furnishings, previewLevels]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  function measureScale() {
-    if (!document) return;
-    const wall = structures[activeLevel]?.walls.find((candidate) => candidate.id === selectedWallId);
-    if (!wall) {
-      setProjectMessage("Select a wall first, then Measure to enter its real length.");
-      return;
-    }
-    const pixelLength = Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1]);
-    const input = window.prompt("Real length of the selected wall, in metres:");
-    const metres = input ? Number.parseFloat(input) : NaN;
-    if (!Number.isFinite(metres) || metres <= 0 || metres > 40) {
-      setProjectMessage("Enter a wall length between 0 and 40 metres.");
-      return;
-    }
-    setDocument(setDocumentScale(document, metres / pixelLength));
-    setProjectMessage("Scale updated from your measurement.");
+  function resetWorkspace(firstLevel: string) {
+    setActiveLevel(firstLevel); setFocusedLevel(firstLevel); setSelectedWall(null); setSelectedId(null);
+    setDraft(null); setPanel(null); setWholeBuilding(false); setExploded(false); setView("perspective");
+    setFitRequest((value) => value + 1); setNotice(""); setStage("workspace");
   }
-
-  function chooseFile(event: ChangeEvent<HTMLInputElement>) {
-    const nextFile = event.target.files?.[0];
-    if (!nextFile) return;
-    const supported = ["image/jpeg", "image/png", "image/webp"].includes(nextFile.type);
-    if (!supported || nextFile.size > 20 * 1024 * 1024) {
-      setProjectMessage(!supported ? "Choose a JPG, PNG or WebP image." : "This image is larger than the 20 MB limit.");
-      event.target.value = "";
-      return;
-    }
-    if (imageUrl) URL.revokeObjectURL(imageUrl);
-    setFile(nextFile);
-    setImageUrl(URL.createObjectURL(nextFile));
-    setProjectMessage(null);
+  function openProject(next: FloorplanDocumentV2) {
+    if (!next.levels.length) { setNotice("This project has no floors. Try another file."); return; }
+    dispatch({ type: "open", snapshot: { kind: "project", document: next } });
+    resetWorkspace(documentRegions(next)[0].id);
   }
-
-  async function analyze(useSample = false) {
-    setStage("analyzing");
-    setAnalysisStep(0);
-    await sleep(420);
-    setAnalysisStep(1);
-    let proposedRegions = sampleRegions;
-    let proposedStructures: StructureMap = {};
-    let proposedSize: AnalysisSize | null = null;
-    let proposedPreviewDataUrl: string | undefined;
-    if (!useSample && imageUrl) {
-      const analysis = await inspectFloorplan(imageUrl);
-      proposedRegions = analysis.regions;
-      proposedStructures = analysis.structures;
-      proposedSize = analysis.size;
-      proposedPreviewDataUrl = analysis.previewDataUrl;
-    }
-    await sleep(520);
-    setAnalysisStep(2);
-    await sleep(460);
-    setAnalysisStep(3);
-    await sleep(420);
-    setRegions(proposedRegions);
-    setStructures(proposedStructures);
-    setDocument(!useSample && proposedSize && Object.keys(proposedStructures).length ? createFloorplanDocumentV2({
-      name: file?.name ?? "Floorplan project",
-      mimeType: file?.type ?? "image/unknown",
-      width: proposedSize.width,
-      height: proposedSize.height,
-      regions: proposedRegions,
-      structures: proposedStructures,
-      previewDataUrl: proposedPreviewDataUrl,
-    }) : null);
-    setFurnishings([]);
-    setFurnitureHistory([]);
-    setSelectedFurnishingId(null);
-    setAnalysisSize(proposedSize);
-    setActiveLevel(proposedRegions[0]?.id ?? "ground");
-    setVisibleLevels(new Set(proposedRegions.slice(0, 2).map((region) => region.id)));
-    setWallCutaway(1);
-    setSelectedWallId(null);
-    setProjectMessage(null);
-    setStage("workspace");
+  function sample() {
+    dispatch({ type: "open", snapshot: { kind: "sample", furnishings: [] } });
+    resetWorkspace(sampleLevels[0].id);
   }
-
-  async function importProject(event: ChangeEvent<HTMLInputElement>) {
-    const projectFile = event.target.files?.[0];
-    if (!projectFile) return;
+  async function chooseImage(file: File | undefined) {
+    if (!file) return;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 20 * 1024 * 1024) {
+      setNotice("Choose a PNG, JPEG or WebP image under 20 MB."); return;
+    }
+    const generation = ++intakeGeneration.current;
+    intakeAbort.current?.abort();
+    intakeAbort.current = new AbortController();
+    const url = URL.createObjectURL(file);
+    setNotice(""); setStage("analyzing"); setPhase("Reading image…");
     try {
-      const imported = parseProject(await projectFile.text());
-      setDocument(imported);
-      setFurnishings(imported.furnishings ?? []);
-      setFurnitureHistory([]);
-      setSelectedFurnishingId(null);
-      setRegions(documentRegions(imported));
-      setStructures(documentStructures(imported));
-      setImageUrl(imported.source.previewDataUrl ?? null);
-      setAnalysisSize({ width: imported.source.width, height: imported.source.height });
-      setActiveLevel(imported.levels[0].id);
-      setVisibleLevels(new Set(imported.levels.map((level) => level.id)));
-      setSelectedWallId(null);
-      setProjectMessage("Project imported. The source texture is restored when it was included in the project.");
-      setStage("workspace");
+      const result = await inspectFloorplan(url, setPhase, intakeAbort.current.signal);
+      if (generation !== intakeGeneration.current) return;
+      if (!result.regions.length || !Object.values(result.structures).some((structure) => structure.walls.length >= 3)) throw new Error("No usable floorplan was found. Try a clearer, straight-on image.");
+      openProject(createFloorplanDocumentV2({ name: file.name, mimeType: file.type, width: result.size.width, height: result.size.height, previewDataUrl: result.previewDataUrl, regions: result.regions, structures: result.structures }));
     } catch (error) {
-      setProjectMessage(error instanceof Error ? error.message : "This project could not be imported.");
-    } finally {
-      event.target.value = "";
-    }
+      if (generation === intakeGeneration.current) { setStage("welcome"); setNotice(error instanceof Error ? error.message : "Could not read this image."); }
+    } finally { URL.revokeObjectURL(url); }
   }
-
-  function openProject(project: FloorplanDocumentV2) {
-    setDocument(project);
-    setFurnishings(project.furnishings ?? []);
-    setFurnitureHistory([]);
-    setSelectedFurnishingId(null);
-    setRegions(documentRegions(project));
-    setStructures(documentStructures(project));
-    setImageUrl(project.source.previewDataUrl ?? null);
-    setAnalysisSize({ width: project.source.width, height: project.source.height });
-    setActiveLevel(project.levels[0].id);
-    setVisibleLevels(new Set(project.levels.map((level) => level.id)));
-    setSelectedWallId(null);
-    setProjectMessage("Local project restored.");
-    setStage("workspace");
+  async function importProject(file: File | undefined) {
+    if (!file) return;
+    try { openProject(parseProject(await file.text())); }
+    catch { setNotice("This is not a valid Planform project file. Your current project has not changed."); }
   }
-
-  function removeSelectedWall() {
-    if (!document || !selectedWallId) return;
-    const next = removeDocumentWall(document, activeLevel, selectedWallId);
-    setDocument(next);
-    setStructures(documentStructures(next));
-    setSelectedWallId(null);
-    setProjectMessage("Wall removed and the space marked open. Undo is available.");
+  function commitProject(next: FloorplanDocumentV2) {
+    if (next !== project) dispatch({ type: "commit", snapshot: { kind: "project", document: next } });
   }
-
-  function addOpening(kind: "door" | "window") {
-    if (!document || !selectedWallId) return;
-    const next = addDocumentOpening(document, activeLevel, selectedWallId, kind);
-    setDocument(next);
-    setStructures(documentStructures(next));
-    setProjectMessage(`${kind === "door" ? "Door" : "Window"} added at the wall midpoint. Drag positioning is the next editor refinement.`);
+  function changeFloor(id: string) {
+    if (draft) setNotice("Preview cancelled when changing floor.");
+    setDraft(null); setSelectedId(null); setSelectedWall(null); setActiveLevel(id); setFocusedLevel(id);
   }
-
-  function undoEdit() {
-    if (!document) return;
-    const next = undoLastDocumentEdit(document);
-    setDocument(next);
-    setStructures(documentStructures(next));
-    setProjectMessage("Last structural edit undone.");
+  function undo() {
+    if (draft) { setDraft(null); setNotice("Preview cancelled. No saved furniture was changed."); return; }
+    if (!history.past.length) return;
+    dispatch({ type: "undo" }); setSelectedId(null); setSelectedWall(null); setNotice("Last change undone.");
   }
-
-  function alignStairs() {
-    if (!document) return;
-    const next = realignDocumentStairs(document);
-    setDocument(next);
-    setStructures(documentStructures(next));
-    setProjectMessage("Stair shafts aligned across adjacent floors.");
+  function previewMove(id: string, x: number, z: number): FurnitureMoveResult {
+    const placement = draft?.id === id ? draft : furnishings.find((item) => item.id === id);
+    const level = levels.find((item) => item.id === placement?.levelId);
+    if (!placement || !level) return { position: { x, z }, collision: "wall" };
+    return previewPlacement({ ...placement, x, z }, level, furnishings, gridSnap);
   }
-
-  function confirmLevel() {
-    if (!document) return;
-    const now = new Date().toISOString();
-    setDocument({
-      ...document,
-      updatedAt: now,
-      levels: document.levels.map((level) => level.id === activeLevel ? { ...level, confirmed: true } : level),
-      issues: document.issues.map((issue) => (
-        issue.levelId === activeLevel || issue.code === "floor-order" ? { ...issue, resolved: true } : issue
-      )),
-    });
-    setProjectMessage(`${selectedRegion.name} confirmed.`);
+  function commitMove(id: string, x: number, z: number) {
+    const result = previewMove(id, x, z);
+    if (draft?.id === id) { setDraft({ ...draft, ...result.position }); return; }
+    if (result.collision) { setNotice(collisionDescription(result.collision) + " Move was not saved."); return; }
+    const previous = furnishings.find((placement) => placement.id === id);
+    if (!previous || (previous.x === result.position.x && previous.z === result.position.z)) return;
+    dispatch({ type: "commit", snapshot: withFurnishings(history.present, furnishings.map((placement) => placement.id === id ? { ...placement, ...result.position } : placement)) });
   }
-
-  function toggleLevel(id: string) {
-    setVisibleLevels((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  function chooseFurniture(item: FurnitureCatalogItem) {
+    if (!floor) return;
+    const placement: FurniturePlacement = { id: "furniture-" + crypto.randomUUID(), catalogId: item.id, levelId: floor.id, x: floor.slab.x, z: floor.slab.z, rotation: 0 };
+    const position = findNearestValidFurniturePosition(item, floor, 0, placement, gridSnap ? 0.1 : 0, placementObstacles(furnishings, placement));
+    setDraft({ ...placement, ...(position ?? placement) }); setSelectedId(null); setPanel(null);
+    setWholeBuilding(false); setExploded(false); setNotice("");
   }
-
-  function moveLevel(id: string, offset: -1 | 1) {
-    setRegions((current) => {
-      const next = moveRegion(current, id, offset);
-      setDocument((project) => project ? {
-        ...project,
-        updatedAt: new Date().toISOString(),
-        levels: next.map((region, order) => {
-          const level = project.levels.find((candidate) => candidate.id === region.id)!;
-          return { ...level, order, elevation: order * 3.05, name: region.name, sourceRegion: region };
-        }),
-      } : project);
-      return next;
-    });
-  }
-
-  function reverseLevelOrder() {
-    setRegions((current) => {
-      const next = resequenceRegions([...current].reverse());
-      setDocument((project) => project ? {
-        ...project,
-        updatedAt: new Date().toISOString(),
-        levels: next.map((region, order) => {
-          const level = project.levels.find((candidate) => candidate.id === region.id)!;
-          return { ...level, order, elevation: order * 3.05, name: region.name, sourceRegion: region };
-        }),
-      } : project);
-      return next;
-    });
-  }
-
-  function renameLevel(id: string, name: string) {
-    setRegions((current) => current.map((region) => (
-      region.id === id ? { ...region, name, nameEdited: true } : region
-    )));
-    setDocument((project) => project ? {
-      ...project,
-      updatedAt: new Date().toISOString(),
-      levels: project.levels.map((level) => level.id === id ? {
-        ...level,
-        name,
-        sourceRegion: { ...level.sourceRegion, name, nameEdited: true },
-      } : level),
-    } : project);
-  }
-
-  function resizeLevelBoundary(id: string, amount: number) {
-    setRegions((current) => current.map((region) => (
-      region.id === id ? resizeRegion(region, amount) : region
-    )));
-    setDocument((project) => project ? {
-      ...project,
-      updatedAt: new Date().toISOString(),
-      levels: project.levels.map((level) => level.id === id ? {
-        ...level,
-        sourceRegion: resizeRegion(level.sourceRegion, amount),
-      } : level),
-    } : project);
-  }
-
-  function toggleOutdoorArea(id: string, included: boolean) {
-    setRegions((current) => current.map((region) => {
-      if (region.id !== id) return region;
-      const next = { ...region, hasOutdoorArea: included };
-      return included && !region.hasOutdoorArea ? resizeRegion(next, 0.035) : next;
-    }));
-    setDocument((project) => project ? {
-      ...project,
-      updatedAt: new Date().toISOString(),
-      levels: project.levels.map((level) => level.id === id ? {
-        ...level,
-        sourceRegion: { ...level.sourceRegion, hasOutdoorArea: included },
-      } : level),
-    } : project);
-  }
-
-  async function shareProject() {
-    if (!document) return;
-    setProjectMessage("Creating share link…");
-    try {
-      const response = await fetch("/api/share", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(document),
-      });
-      const data = await response.json() as { url?: string; error?: string };
-      if (!response.ok || !data.url) {
-        setProjectMessage(data.error ?? "Failed to create share link.");
-        return;
-      }
-      await navigator.clipboard.writeText(data.url).catch(() => undefined);
-      setProjectMessage(`Share link copied: ${data.url}`);
-    } catch {
-      setProjectMessage("Share link unavailable. Export the project file to share manually.");
-    }
-  }
-
-  function rememberFurnitureLayout() {
-    setFurnitureHistory((current) => [...current.slice(-24), furnishings]);
-  }
-
-  function furnitureObstacles(id: string, levelId: string): FurnitureObstacle[] {
-    return furnishings.flatMap((candidate) => {
-      if (candidate.id === id || candidate.levelId !== levelId) return [];
-      const item = furnitureCatalogItem(candidate.catalogId);
-      return item ? [{ id: candidate.id, item, position: candidate, rotation: candidate.rotation }] : [];
-    });
-  }
-
-  function collisionMessage(collision: FurnitureCollisionReason) {
-    if (collision === "wall") return "Placement overlaps a wall or window.";
-    if (collision === "door") return "Placement blocks a door.";
-    if (collision === "fixture") return "Placement overlaps a fixed house element.";
-    if (collision === "stair") return "Placement overlaps the stairs.";
-    if (collision === "furniture") return "Placement overlaps another piece of furniture.";
-    return "Choose a valid position on the floor.";
-  }
-
-  function undoFurnitureEdit() {
-    const previous = furnitureHistory.at(-1);
-    if (!previous) return;
-    setFurnishings(previous);
-    setFurnitureHistory((current) => current.slice(0, -1));
-    setSelectedFurnishingId((current) => current && previous.some((placement) => placement.id === current) ? current : null);
-    setProjectMessage("Last furniture change undone.");
-  }
-
-  function addFurnishing(item: FurnitureCatalogItem) {
-    const level = previewLevels.find((candidate) => candidate.id === activeLevel) ?? previewLevels[0];
+  function changePlacement(next: FurniturePlacement) {
+    const level = levels.find((item) => item.id === next.levelId);
     if (!level) return;
-    const sameLevelCount = furnishings.filter((placement) => placement.levelId === level.id).length;
-    const stagger = Math.min(1.2, sameLevelCount * 0.28);
-    const placement: FurniturePlacement = {
-      id: typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? `furniture-${crypto.randomUUID()}`
-        : `furniture-${Date.now()}`,
-      catalogId: item.id,
-      levelId: level.id,
-      x: level.slab.x + stagger,
-      z: level.slab.z + stagger * 0.45,
-      rotation: 0,
-    };
-    const position = findNearestValidFurniturePosition(
-      item,
-      level,
-      placement.rotation,
-      placement,
-      gridSnapEnabled ? 0.1 : 0,
-      furnitureObstacles(placement.id, level.id),
-    );
-    if (!position) {
-      setProjectMessage(`${item.name} does not fit in an open area on ${level.name}.`);
-      return;
-    }
-    placement.x = position.x;
-    placement.z = position.z;
-    rememberFurnitureLayout();
-    setFurnishings((current) => [...current, placement]);
-    setSelectedFurnishingId(placement.id);
-    setViewMode("furnish");
-    setExploded(false);
-    setMobilePanel("canvas");
-    setProjectMessage(`${item.name} added at true size on ${level.name}.`);
+    const result = previewPlacement(next, level, furnishings, gridSnap);
+    if (draft) { setDraft({ ...next, ...result.position }); return; }
+    if (result.collision) { setNotice(collisionDescription(result.collision)); return; }
+    dispatch({ type: "commit", snapshot: withFurnishings(history.present, furnishings.map((item) => item.id === next.id ? { ...next, ...result.position } : item)) });
   }
-
-  function selectFurnishing(id: string | null) {
-    setSelectedFurnishingId(id);
-    if (!id) return;
-    const placement = furnishings.find((candidate) => candidate.id === id);
-    if (placement) setActiveLevel(placement.levelId);
+  function removeSelected() {
+    if (!selected) return;
+    dispatch({ type: "commit", snapshot: withFurnishings(history.present, furnishings.filter((item) => item.id !== selected.id)) }); setSelectedId(null);
   }
-
-  function previewFurnishingMove(id: string, x: number, z: number): FurnitureMoveResult {
-    const placement = furnishings.find((candidate) => candidate.id === id);
-    const item = placement ? furnitureCatalogItem(placement.catalogId) : undefined;
-    const level = placement ? previewLevels.find((candidate) => candidate.id === placement.levelId) : undefined;
-    if (!placement || !item || !level) return { position: { x, z }, collision: "wall" };
-    return resolveFurnitureMove(
-      item,
-      level,
-      placement.rotation,
-      placement,
-      { x, z },
-      gridSnapEnabled ? 0.1 : 0,
-      furnitureObstacles(id, placement.levelId),
-    );
+  function cancelPlacement() { const wasDraft = Boolean(draft); setDraft(null); setSelectedId(null); if (wasDraft) setPanel("catalogue"); }
+  function finishPlacement() {
+    if (draft && floor) {
+      const next = confirmPlacement(history.present, draft, floor, gridSnap);
+      if (next === history.present) return;
+      dispatch({ type: "commit", snapshot: next }); setSelectedId(draft.id); setDraft(null); setNotice("Furniture placed.");
+    } else setSelectedId(null);
   }
-
-  function commitFurnishingMove(id: string, x: number, z: number) {
-    const placement = furnishings.find((candidate) => candidate.id === id);
-    if (!placement) return;
-    const preview = previewFurnishingMove(id, x, z);
-    if (preview.collision) {
-      setProjectMessage(`${collisionMessage(preview.collision)} Move through it, then release on a clear area.`);
-      return;
-    }
-    if (preview.position.x === placement.x && preview.position.z === placement.z) return;
-    rememberFurnitureLayout();
-    setFurnishings((current) => current.map((candidate) => (
-      candidate.id === id ? { ...candidate, ...preview.position } : candidate
-    )));
-    setProjectMessage("Furniture placed.");
-  }
-
-  function nudgeFurnishing(id: string, deltaX: number, deltaZ: number) {
-    const placement = furnishings.find((candidate) => candidate.id === id);
-    if (!placement) return;
-    commitFurnishingMove(id, placement.x + deltaX, placement.z + deltaZ);
-  }
-
-  function rotateFurnishing(id: string, direction: -1 | 1) {
-    const snap = Math.PI / 12;
-    const placement = furnishings.find((candidate) => candidate.id === id);
-    const item = placement ? furnitureCatalogItem(placement.catalogId) : undefined;
-    const level = placement ? previewLevels.find((candidate) => candidate.id === placement.levelId) : undefined;
-    if (!placement || !item || !level) return;
-    const rotation = placement.rotation + snap * direction;
-    const position = validFurniturePosition(
-      item,
-      level,
-      rotation,
-      placement,
-      gridSnapEnabled ? 0.1 : 0,
-      furnitureObstacles(id, placement.levelId),
-    );
-    if (!position) {
-      setProjectMessage("There is not enough clearance to rotate here.");
-      return;
-    }
-    rememberFurnitureLayout();
-    setFurnishings((current) => current.map((candidate) => (
-      candidate.id === id ? { ...candidate, ...position, rotation } : candidate
-    )));
-  }
-
-  function mirrorFurnishing(id: string) {
-    const placement = furnishings.find((candidate) => candidate.id === id);
-    if (!placement) return;
-    rememberFurnitureLayout();
-    setFurnishings((current) => current.map((candidate) => (
-      candidate.id === id ? { ...candidate, mirrored: !candidate.mirrored } : candidate
-    )));
-    setProjectMessage("Furniture mirrored.");
-  }
-
-  function removeFurnishing(id: string) {
-    rememberFurnitureLayout();
-    setFurnishings((current) => current.filter((placement) => placement.id !== id));
-    setSelectedFurnishingId((current) => current === id ? null : current);
-    setProjectMessage("Furniture removed from the room.");
-  }
-
-  if (stage === "analyzing") return <AnalysisScreen step={analysisStep} />;
-
-  if (stage === "workspace") {
-    return (
-      <Workspace
-        activeLevel={activeLevel}
-        addOpening={addOpening}
-        alignStairs={alignStairs}
-        analysisSize={analysisSize}
-        canUndoFurniture={furnitureHistory.length > 0}
-        confirmLevel={confirmLevel}
-        document={document}
-        exploded={exploded}
-        furnishings={furnishings}
-        focusedLevel={focusedLevel}
-        gridSnapEnabled={gridSnapEnabled}
-        imageUrl={imageUrl}
-        measureScale={measureScale}
-        mobilePanel={mobilePanel}
-        moveLevel={moveLevel}
-        commitFurnishingMove={commitFurnishingMove}
-        previewFurnishingMove={previewFurnishingMove}
-        nudgeFurnishing={nudgeFurnishing}
-        previewLevels={previewLevels}
-        shareProject={shareProject}
-        projectMessage={projectMessage}
-        regions={regions}
-        renameLevel={renameLevel}
-        removeFurnishing={removeFurnishing}
-        mirrorFurnishing={mirrorFurnishing}
-        resizeLevelBoundary={resizeLevelBoundary}
-        rotateFurnishing={rotateFurnishing}
-        reverseLevelOrder={reverseLevelOrder}
-        removeSelectedWall={removeSelectedWall}
-        selectedLevel={selectedLevel}
-        selectedRegion={selectedRegion}
-        selectedFurnishingId={selectedFurnishingId}
-        selectedWallId={selectedWallId}
-        structures={structures}
-        setActiveLevel={setActiveLevel}
-        setExploded={setExploded}
-        setFocusedLevel={setFocusedLevel}
-        setGridSnapEnabled={setGridSnapEnabled}
-        setMobilePanel={setMobilePanel}
-        setSelectedWallId={setSelectedWallId}
-        setSelectedFurnishingId={selectFurnishing}
-        setStage={setStage}
-        setViewMode={setViewMode}
-        setWallCutaway={setWallCutaway}
-        toggleLevel={toggleLevel}
-        toggleOutdoorArea={toggleOutdoorArea}
-        undoEdit={undoEdit}
-        undoFurnitureEdit={undoFurnitureEdit}
-        viewMode={viewMode}
-        visibleLevels={visibleLevels}
-        wallCutaway={wallCutaway}
-        addFurnishing={addFurnishing}
-      />
-    );
-  }
-
-  return (
-    <main className="welcome-shell">
-      <header className="marketing-header">
-        <Brand />
-        <div className="header-actions">
-          <span className="prototype-pill"><span /> Early build</span>
-          <button className="icon-button mobile-only" aria-label="Open menu"><Menu size={20} /></button>
-        </div>
-      </header>
-
-      <section className="hero-grid">
-        <div className="hero-copy">
-          <p className="eyebrow"><Sparkles size={14} /> Structure before decoration</p>
-          <h1>Your home,<br /><em>rebuilt in space.</em></h1>
-          <p className="hero-lede">
-            Turn an ordinary floorplan into a precise, multi-level digital twin you can inspect from every angle.
-          </p>
-
-          <div className="upload-panel">
-            <input ref={projectInputRef} type="file" accept="application/json,.json" onChange={importProject} className="visually-hidden" />
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={chooseFile}
-              className="visually-hidden"
-            />
-            {!file ? (
-              <button className="drop-zone" onClick={() => fileInputRef.current?.click()}>
-                <span className="upload-icon"><ImageUp size={24} /></span>
-                <span className="drop-copy">
-                  <strong>Upload your floorplan</strong>
-                  <small>JPG, PNG or WebP · up to 20 MB</small>
-                </span>
-                <span className="browse-label">Choose file</span>
-              </button>
-            ) : (
-              <div className="file-ready">
-                <span className="file-type">{file.name.split(".").pop()?.toUpperCase().slice(0, 4) || "FILE"}</span>
-                <span className="file-copy"><strong>{file.name}</strong><small>{(file.size / 1024 / 1024).toFixed(1)} MB · Ready to inspect</small></span>
-                <button className="icon-button" onClick={() => { setFile(null); setImageUrl(null); }} aria-label="Remove file"><X size={18} /></button>
-              </div>
-            )}
-
-            <button className="primary-action" disabled={!file} onClick={() => analyze(false)}>
-              Find floors <ArrowRight size={18} />
-            </button>
-            <button className="sample-action" onClick={() => analyze(true)}>
-              Explore the sample residence
-            </button>
-            <button className="sample-action import-project-action" onClick={() => projectInputRef.current?.click()}>
-              <Upload size={13} /> Import a V2 project
-            </button>
-            {lastProject && (
-              <button className="resume-project-action" onClick={() => openProject(lastProject)}>
-                <span><strong>Continue {lastProject.name}</strong><small>Saved {new Date(lastProject.updatedAt).toLocaleString()}</small></span>
-                <ArrowRight size={16} />
-              </button>
-            )}
-            {projectMessage && <p className="project-message">{projectMessage}</p>}
-            <p className="privacy-note"><ShieldCheck size={13} /> Analysis and project storage stay on this device.</p>
-          </div>
-        </div>
-
-        <div className="hero-visual" aria-label="Two-level floorplan becoming a 3D building">
-          <div className="visual-caption visual-caption-top"><ScanLine size={15} /><span>2 plans found</span></div>
-          <div className="paper-plan paper-plan-back"><PlanLines variant="upper" /></div>
-          <div className="paper-plan paper-plan-front"><PlanLines variant="ground" /></div>
-          <div className="height-guide"><span>5.25 m</span></div>
-          <div className="visual-caption visual-caption-bottom"><Box size={15} /><span>Metric structure</span></div>
-        </div>
-      </section>
-
-      <section className="promise-strip" aria-label="Product capabilities">
-        <PromiseCard icon={<Layers3 size={19} />} title="Multi-level" copy="Separate, align and stack every floor." />
-        <PromiseCard icon={<Ruler size={19} />} title="Real dimensions" copy="Recover scale or calibrate one known length." />
-        <PromiseCard icon={<Smartphone size={19} />} title="Made for mobile" copy="Review your model from wherever you are." />
-      </section>
-    </main>
-  );
-}
-
-function Workspace({
-  addFurnishing,
-  activeLevel,
-  addOpening,
-  alignStairs,
-  analysisSize,
-  canUndoFurniture,
-  confirmLevel,
-  document,
-  exploded,
-  furnishings,
-  focusedLevel,
-  gridSnapEnabled,
-  imageUrl,
-  measureScale,
-  mobilePanel,
-  commitFurnishingMove,
-  moveLevel,
-  nudgeFurnishing,
-  previewFurnishingMove,
-  previewLevels,
-  projectMessage,
-  regions,
-  renameLevel,
-  removeFurnishing,
-  mirrorFurnishing,
-  resizeLevelBoundary,
-  reverseLevelOrder,
-  rotateFurnishing,
-  removeSelectedWall,
-  selectedLevel,
-  selectedRegion,
-  selectedFurnishingId,
-  selectedWallId,
-  shareProject,
-  structures,
-  setActiveLevel,
-  setExploded,
-  setFocusedLevel,
-  setGridSnapEnabled,
-  setMobilePanel,
-  setSelectedWallId,
-  setSelectedFurnishingId,
-  setStage,
-  setViewMode,
-  setWallCutaway,
-  toggleLevel,
-  toggleOutdoorArea,
-  undoEdit,
-  undoFurnitureEdit,
-  viewMode,
-  visibleLevels,
-  wallCutaway,
-}: {
-  addFurnishing: (item: FurnitureCatalogItem) => void;
-  activeLevel: string;
-  addOpening: (kind: "door" | "window") => void;
-  alignStairs: () => void;
-  analysisSize: AnalysisSize | null;
-  canUndoFurniture: boolean;
-  confirmLevel: () => void;
-  document: FloorplanDocumentV2 | null;
-  exploded: boolean;
-  furnishings: FurniturePlacement[];
-  focusedLevel: string | null;
-  gridSnapEnabled: boolean;
-  imageUrl: string | null;
-  measureScale: () => void;
-  mobilePanel: "levels" | "canvas" | "details";
-  commitFurnishingMove: (id: string, x: number, z: number) => void;
-  moveLevel: (id: string, offset: -1 | 1) => void;
-  nudgeFurnishing: (id: string, deltaX: number, deltaZ: number) => void;
-  previewFurnishingMove: (id: string, x: number, z: number) => FurnitureMoveResult;
-  previewLevels: Level[];
-  projectMessage: string | null;
-  regions: SourceRegion[];
-  renameLevel: (id: string, name: string) => void;
-  removeFurnishing: (id: string) => void;
-  mirrorFurnishing: (id: string) => void;
-  resizeLevelBoundary: (id: string, amount: number) => void;
-  reverseLevelOrder: () => void;
-  rotateFurnishing: (id: string, direction: -1 | 1) => void;
-  removeSelectedWall: () => void;
-  selectedLevel: Level;
-  selectedRegion: SourceRegion;
-  selectedFurnishingId: string | null;
-  selectedWallId: string | null;
-  shareProject: () => void;
-  structures: StructureMap;
-  setActiveLevel: (id: string) => void;
-  setExploded: (value: boolean) => void;
-  setFocusedLevel: (id: string | null) => void;
-  setGridSnapEnabled: (enabled: boolean) => void;
-  setMobilePanel: (panel: "levels" | "canvas" | "details") => void;
-  setSelectedWallId: (id: string | null) => void;
-  setSelectedFurnishingId: (id: string | null) => void;
-  setStage: (stage: AppStage) => void;
-  setViewMode: (mode: ViewMode) => void;
-  setWallCutaway: (cutaway: number) => void;
-  toggleLevel: (id: string) => void;
-  toggleOutdoorArea: (id: string, included: boolean) => void;
-  undoEdit: () => void;
-  undoFurnitureEdit: () => void;
-  viewMode: ViewMode;
-  visibleLevels: Set<string>;
-  wallCutaway: number;
-}) {
-  const selectedWall = structures[activeLevel]?.walls.find((wall) => wall.id === selectedWallId) ?? null;
-  const levelIssues = document?.issues.filter((issue) => !issue.levelId || issue.levelId === activeLevel) ?? [];
-  return (
-    <main className="workspace-shell">
-      <header className="workspace-header">
-        <button className="back-button" onClick={() => setStage("welcome")} aria-label="Back to upload"><ChevronLeft size={20} /></button>
-        <Brand compact />
-        <div className="project-name"><span>V2 project</span><strong>{document?.name ?? "Sample residence"}</strong></div>
-        <div className="workspace-status"><span className="saved-dot" />Saved on this device</div>
-        {document && <button className="header-tool" onClick={() => downloadProject(document)}><Download size={16} /><span>Export</span></button>}
-        {document && <button className="header-tool" onClick={shareProject}><Share2 size={16} /><span>Share</span></button>}
-        {document?.edits.length ? <button className="icon-button" onClick={undoEdit} aria-label="Undo last structural edit"><Undo2 size={18} /></button> : null}
-        <button className="icon-button" aria-label="Project options"><MoreHorizontal size={20} /></button>
-      </header>
-
-      <div className="workspace-grid">
-        <aside className={`level-rail ${mobilePanel === "levels" ? "mobile-active" : ""}`}>
-          <div className="panel-heading">
-            <div><span className="panel-kicker">Detected structure</span><h2>{regions.length} {regions.length === 1 ? "level" : "levels"}</h2></div>
-            <button className="icon-button small" aria-label="Level help"><CircleHelp size={16} /></button>
-          </div>
-          <p className="panel-intro">Confirm that the plan regions belong to separate floors.</p>
-          <div className="level-list">
-            {regions.map((region, index) => {
-              const level = previewLevels[index] ?? sampleLevels[1];
-              const selected = activeLevel === region.id;
-              const visible = visibleLevels.has(region.id);
-              return (
-                <div
-                  key={region.id}
-                  className={`level-card ${selected ? "selected" : ""}`}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setActiveLevel(region.id)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") setActiveLevel(region.id);
-                  }}
-                >
-                  <span className="level-thumb"><PlanLines variant={index === 0 ? "ground" : "upper"} /></span>
-                  <span className="level-card-copy">
-                    <small>{index === 0 ? "BASE LEVEL" : `LEVEL ${index + 1}`}</small>
-                    <strong>{region.name}</strong>
-                    <em>{level.area.toFixed(1)} m² · {Math.round(region.confidence * 100)}% match{region.hasOutdoorArea ? " · outdoor" : ""}</em>
-                  </span>
-                  <span className="level-card-actions">
-                    <button
-                      disabled={index === 0}
-                      aria-label={`Move ${region.name} down in the building`}
-                      onClick={(event) => { event.stopPropagation(); moveLevel(region.id, -1); }}
-                    >
-                      <ArrowDown size={14} />
-                    </button>
-                    <button
-                      disabled={index === regions.length - 1}
-                      aria-label={`Move ${region.name} up in the building`}
-                      onClick={(event) => { event.stopPropagation(); moveLevel(region.id, 1); }}
-                    >
-                      <ArrowUp size={14} />
-                    </button>
-                    <button
-                      className="visibility-toggle"
-                      aria-label={`${visible ? "Hide" : "Show"} ${region.name}`}
-                      onClick={(event) => { event.stopPropagation(); toggleLevel(region.id); }}
-                    >
-                      {visible ? <Eye size={16} /> : <EyeOff size={16} />}
-                    </button>
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-          {regions.length > 1 && (
-            <button className="secondary-button" onClick={reverseLevelOrder}><ArrowUpDown size={16} /> Reverse floor order</button>
-          )}
-          <button className="secondary-button"><ScanLine size={16} /> Split or add a level</button>
-          <div className="rail-tip"><Sparkles size={15} /><span>We use whitespace, labels and disconnected structure to propose separate floors.</span></div>
-        </aside>
-
-        <section className={`canvas-panel ${mobilePanel === "canvas" ? "mobile-active" : ""}`}>
-          <div className="canvas-toolbar">
-            <div className="view-switch" role="group" aria-label="View mode">
-              <button className={viewMode === "review" ? "active" : ""} onClick={() => setViewMode("review")}><ScanLine size={16} /> Plan review</button>
-              <button className={viewMode === "twin" ? "active" : ""} onClick={() => setViewMode("twin")}><Box size={16} /> 3D twin</button>
-              <button className={viewMode === "furnish" ? "active" : ""} onClick={() => { setViewMode("furnish"); setExploded(false); }}><Sofa size={16} /> Furnish</button>
-            </div>
-            <div className="canvas-actions">
-              {viewMode === "twin" && <button className={`toolbar-button ${exploded ? "active" : ""}`} onClick={() => setExploded(!exploded)}><Move3D size={16} /> Explode</button>}
-              <button className="toolbar-button desktop-only"><Maximize2 size={16} /> Fit</button>
-            </div>
-          </div>
-
-          <div className="canvas-stage">
-            {viewMode === "review" ? (
-              <PlanReview
-                imageUrl={imageUrl}
-                regions={regions}
-                structures={structures}
-                analysisSize={analysisSize}
-                activeLevel={activeLevel}
-                focusedLevel={focusedLevel}
-                selectedWallId={selectedWallId}
-                setActiveLevel={setActiveLevel}
-                setFocusedLevel={setFocusedLevel}
-                setSelectedWallId={setSelectedWallId}
-              />
-            ) : (
-              <ViewerBoundary>
-                <Suspense fallback={<div className="viewer-loading"><Box size={22} /><span>Building the 3D twin…</span></div>}>
-                  <TwinViewer
-                    decorating={viewMode === "furnish"}
-                    exploded={exploded}
-                    furnishings={furnishings}
-                    gridSnapEnabled={gridSnapEnabled}
-                    levels={previewLevels}
-                    onCommitMoveFurnishing={commitFurnishingMove}
-                    onPreviewMoveFurnishing={previewFurnishingMove}
-                    onSelectFurnishing={setSelectedFurnishingId}
-                    selectedFurnishingId={selectedFurnishingId}
-                    visibleLevels={visibleLevels}
-                    wallCutaway={wallCutaway}
-                  />
-                </Suspense>
-              </ViewerBoundary>
-            )}
-            {/* Floor visibility lives beside the model on mobile, where the level
-                rail is a separate tab and toggling there hides the result. */}
-            {viewMode !== "review" && regions.length > 1 && (
-              <div className="floor-visibility mobile-only" role="group" aria-label="Floor visibility">
-                {regions.map((region, index) => (
-                  <button
-                    key={region.id}
-                    className={visibleLevels.has(region.id) ? "on" : ""}
-                    aria-pressed={visibleLevels.has(region.id)}
-                    onClick={() => toggleLevel(region.id)}
-                  >
-                    {visibleLevels.has(region.id) ? <Eye size={13} /> : <EyeOff size={13} />}
-                    <span>{index === 0 ? "BASE" : `${index}F`}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-            {viewMode !== "review" && (
-              <label className="wall-opacity-control">
-                <span><SlidersHorizontal size={14} /> Wall cutaway</span>
-                <input
-                  type="range"
-                  min="0.15"
-                  max="1"
-                  step="0.05"
-                  value={wallCutaway}
-                  onChange={(event) => setWallCutaway(Number(event.target.value))}
-                />
-                <output>{Math.round(wallCutaway * 100)}%</output>
-              </label>
-            )}
-            {viewMode === "furnish" && (
-              <div className="canvas-placement-bar" aria-label="Furniture placement controls">
-                <label className="grid-snap-toggle">
-                  <input
-                    type="checkbox"
-                    checked={gridSnapEnabled}
-                    onChange={(event) => setGridSnapEnabled(event.target.checked)}
-                  />
-                  <Grid3X3 size={14} /> Grid 10 cm
-                </label>
-                <button onClick={undoFurnitureEdit} disabled={!canUndoFurniture}><Undo2 size={14} /> Undo</button>
-                {selectedFurnishingId && (
-                  <>
-                    <button onClick={() => setSelectedFurnishingId(null)}><ChevronLeft size={14} /> Back</button>
-                    <button onClick={() => rotateFurnishing(selectedFurnishingId, 1)}><RotateCw size={14} /> Rotate</button>
-                    <button onClick={() => mirrorFurnishing(selectedFurnishingId)}><FlipHorizontal2 size={14} /> Mirror</button>
-                    <button className="danger" onClick={() => removeFurnishing(selectedFurnishingId)}><Trash2 size={14} /> Delete</button>
-                  </>
-                )}
-              </div>
-            )}
-            <div className="canvas-hint">
-              {viewMode === "review"
-                ? <><ScanLine size={14} /> Tap a region to review that level</>
-                : viewMode === "furnish"
-                  ? <><Sofa size={14} /> Drag freely · red means the final position is blocked</>
-                  : <><Move3D size={14} /> Drag to orbit · Pinch to zoom</>}
-            </div>
-          </div>
-        </section>
-
-        <aside className={`detail-panel ${mobilePanel === "details" ? "mobile-active" : ""}`}>
-          {viewMode === "furnish" ? (
-            <FurniturePanel
-              activeLevel={selectedLevel}
-              addFurnishing={addFurnishing}
-              canUndoFurniture={canUndoFurniture}
-              furnishings={furnishings}
-              gridSnapEnabled={gridSnapEnabled}
-              nudgeFurnishing={nudgeFurnishing}
-              projectMessage={projectMessage}
-              removeFurnishing={removeFurnishing}
-              mirrorFurnishing={mirrorFurnishing}
-              rotateFurnishing={rotateFurnishing}
-              selectedFurnishingId={selectedFurnishingId}
-              setGridSnapEnabled={setGridSnapEnabled}
-              setSelectedFurnishingId={setSelectedFurnishingId}
-              undoFurnitureEdit={undoFurnitureEdit}
-            />
-          ) : <>
-          <div className="panel-heading details-heading">
-            <div><span className="panel-kicker">Review status</span><h2>{selectedLevel.name}</h2></div>
-            <span className="match-badge"><Check size={13} /> {Math.round((selectedLevel.detectionConfidence ?? selectedRegion.confidence) * 100)}%</span>
-          </div>
-
-          <div className="progress-row"><span><i className="complete" /><i className="complete" /><i className="complete" /><i /></span><em>3 of 4 checks</em></div>
-
-          {projectMessage && <div className="project-message workspace-message">{projectMessage}</div>}
-
-          {document && (
-            <div className="detail-section v2-runtime-card">
-              <span className="detail-label">V2 reconstruction</span>
-              <strong>Editable hybrid structure</strong>
-              <p>{document.model.runtime === "geometry-fallback" ? "Geometry and topology fallback active. Semantic model output will use this same review document." : `${document.model.runtime.toUpperCase()} semantic model active.`}</p>
-              <button className="inline-action" onClick={alignStairs}><ArrowUpDown size={14} /> Align shared stair shaft</button>
-            </div>
-          )}
-
-          {document && !selectedWall && (
-            <div className="detail-section wall-review-list">
-              <span className="detail-label">Wall review</span>
-              <p>Select any detected boundary to inspect or mark it as open space.</p>
-              <div>
-                {(structures[activeLevel]?.walls ?? []).map((wall, index) => (
-                  <button key={wall.id} onClick={() => setSelectedWallId(wall.id)}>
-                    <span>{index + 1}</span>
-                    <strong>Detected wall</strong>
-                    <em>{Math.round(wall.confidence * 100)}%</em>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {selectedWall && (
-            <div className="detail-section selected-wall-card">
-              <span className="detail-label">Selected boundary</span>
-              <strong>Detected wall · {Math.round(selectedWall.confidence * 100)}% evidence</strong>
-              <p>If this line is furniture, a dimension, or an open boundary, mark it as open. The original proposal remains in edit history.</p>
-              <div className="opening-actions">
-                <button onClick={() => addOpening("door")}>Add door</button>
-                <button onClick={() => addOpening("window")}>Add window</button>
-              </div>
-              <button className="danger-action" onClick={removeSelectedWall}><Trash2 size={14} /> Mark as open space</button>
-            </div>
-          )}
-
-          {levelIssues.length > 0 && (
-            <div className="detail-section issue-list">
-              <span className="detail-label">Review queue</span>
-              {levelIssues.slice(0, 4).map((issue) => <p key={issue.id}>{issue.message}</p>)}
-            </div>
-          )}
-
-          <div className="detail-section correction-section">
-            <span className="detail-label">Level identity</span>
-            <label className="level-name-field">
-              <span>Which floor is this?</span>
-              <select value={selectedRegion.name} onChange={(event) => renameLevel(selectedRegion.id, event.target.value)}>
-                {LEVEL_NAME_OPTIONS.map((name) => <option key={name} value={name}>{name}</option>)}
-                {!LEVEL_NAME_OPTIONS.includes(selectedRegion.name) && <option value={selectedRegion.name}>{selectedRegion.name}</option>}
-              </select>
-            </label>
-            <label className="outdoor-area-toggle">
-              <input
-                type="checkbox"
-                aria-label="Balcony or terrace belongs to this level"
-                checked={Boolean(selectedRegion.hasOutdoorArea)}
-                onChange={(event) => toggleOutdoorArea(selectedRegion.id, event.target.checked)}
-              />
-              <span><strong>Balcony or terrace belongs to this level</strong><small>Includes nearby exterior lines in the plan boundary.</small></span>
-            </label>
-            <div className="boundary-controls">
-              <button onClick={() => resizeLevelBoundary(selectedRegion.id, 0.025)}><Maximize2 size={14} /> Include more</button>
-              <button onClick={() => resizeLevelBoundary(selectedRegion.id, -0.025)}><ScanLine size={14} /> Tighten outline</button>
-            </div>
-          </div>
-
-          <div className="detail-section">
-            <span className="detail-label">Structure</span>
-            <div className="stat-grid">
-              <div><strong>{selectedLevel.roomCount}</strong><span>rooms</span></div>
-              <div><strong>{selectedLevel.wallCount}</strong><span>walls</span></div>
-              <div><strong>{selectedLevel.openingCount}</strong><span>openings</span></div>
-              <div><strong>{selectedLevel.stairs?.length ?? 0}</strong><span>stairs</span></div>
-            </div>
-          </div>
-
-          <div className="detail-section">
-            <span className="detail-label">Dimensions</span>
-            <DetailRow label="Floor area" value={`${selectedLevel.area.toFixed(1)} m²`} />
-            <DetailRow label="Ceiling" value={`${selectedLevel.ceilingHeight.toFixed(2)} m`} />
-            <DetailRow label="Scale" value={scaleLabel(document?.scale)} warning={(document?.scale.source ?? "provisional") !== "user"} />
-          </div>
-
-          <div className="attention-card">
-            <span className="attention-icon"><Ruler size={18} /></span>
-            <div><strong>{scaleHeadline(document?.scale)}</strong><p>{scaleCopy(document?.scale, Boolean(selectedWall))}</p></div>
-            <button onClick={measureScale}>{document?.scale.source === "user" ? "Remeasure" : "Measure"}</button>
-          </div>
-
-          <div className="detail-footer">
-            <button className="primary-action" onClick={confirmLevel}>Confirm this level <ArrowRight size={17} /></button>
-            <p>{selectedLevel.source === "detected" ? "Blue = walls · amber = openings · purple = stairs · green = balcony or terrace. Source-plan details remain visible on the 3D floor." : "The sample demonstrates the review flow with prepared geometry."}</p>
-          </div>
-          </>}
-        </aside>
-      </div>
-
-      <nav className="mobile-nav" aria-label="Workspace panels">
-        <button className={mobilePanel === "levels" ? "active" : ""} onClick={() => setMobilePanel("levels")}><Layers3 size={19} /><span>Levels</span></button>
-        <button className={mobilePanel === "canvas" ? "active" : ""} onClick={() => setMobilePanel("canvas")}><Box size={19} /><span>Model</span></button>
-        <button className={mobilePanel === "details" ? "active" : ""} onClick={() => setMobilePanel("details")}>
-          {viewMode === "furnish" ? <Sofa size={19} /> : <Ruler size={19} />}
-          <span>{viewMode === "furnish" ? "Furniture" : "Review"}</span>
-        </button>
-      </nav>
-    </main>
-  );
-}
-
-function FurniturePanel({
-  activeLevel,
-  addFurnishing,
-  canUndoFurniture,
-  furnishings,
-  gridSnapEnabled,
-  nudgeFurnishing,
-  projectMessage,
-  removeFurnishing,
-  mirrorFurnishing,
-  rotateFurnishing,
-  selectedFurnishingId,
-  setGridSnapEnabled,
-  setSelectedFurnishingId,
-  undoFurnitureEdit,
-}: {
-  activeLevel: Level;
-  addFurnishing: (item: FurnitureCatalogItem) => void;
-  canUndoFurniture: boolean;
-  furnishings: FurniturePlacement[];
-  gridSnapEnabled: boolean;
-  nudgeFurnishing: (id: string, deltaX: number, deltaZ: number) => void;
-  projectMessage: string | null;
-  removeFurnishing: (id: string) => void;
-  mirrorFurnishing: (id: string) => void;
-  rotateFurnishing: (id: string, direction: -1 | 1) => void;
-  selectedFurnishingId: string | null;
-  setGridSnapEnabled: (enabled: boolean) => void;
-  setSelectedFurnishingId: (id: string | null) => void;
-  undoFurnitureEdit: () => void;
-}) {
-  const [catalogueQuery, setCatalogueQuery] = useState("");
-  const [catalogueCategory, setCatalogueCategory] = useState<FurnitureCatalogItem["category"] | "All">("All");
-  const levelFurniture = furnishings.filter((placement) => placement.levelId === activeLevel.id);
-  const selectedPlacement = furnishings.find((placement) => placement.id === selectedFurnishingId);
-  const selectedItem = selectedPlacement ? furnitureCatalogItem(selectedPlacement.catalogId) : undefined;
-  const visibleCatalogue = FURNITURE_CATALOG.filter((item) => {
-    const query = catalogueQuery.trim().toLowerCase();
-    const matchesQuery = !query || `${item.name} ${item.collection} ${item.upholstery}`.toLowerCase().includes(query);
-    return matchesQuery && (catalogueCategory === "All" || item.category === catalogueCategory);
-  });
-  return (
-    <div className="furniture-panel">
-      <div className="panel-heading furniture-heading">
-        <div><span className="panel-kicker">Furniture library</span><h2>Place to scale</h2></div>
-        <span className="furniture-count">{levelFurniture.length} placed</span>
-      </div>
-      <p className="panel-intro">IKEA references use metric footprints and lightweight procedural previews. Linked starters can be compared with the current IKEA listing.</p>
-      <div className="furniture-edit-toolbar">
-        <label className="grid-snap-toggle panel-grid-toggle">
-          <input
-            type="checkbox"
-            checked={gridSnapEnabled}
-            onChange={(event) => setGridSnapEnabled(event.target.checked)}
-          />
-          <Grid3X3 size={14} /> Snap to 10 cm grid
-        </label>
-        <button onClick={undoFurnitureEdit} disabled={!canUndoFurniture}><Undo2 size={14} /> Undo</button>
-      </div>
-      {projectMessage && <div className="project-message furniture-message">{projectMessage}</div>}
-
-      {selectedItem && selectedPlacement && (
-        <div className="selected-furniture-card">
-          <div className="selected-furniture-summary">
-            <span><FurnitureItemIcon shape={selectedItem.shape} size={18} /></span>
-            <strong>{selectedItem.name}</strong>
-            <small>{selectedItem.width.toFixed(2)} × {selectedItem.depth.toFixed(2)} m · {selectedPlacement.mirrored ? "mirrored" : "standard"}</small>
-            <button onClick={() => setSelectedFurnishingId(null)} aria-label="Clear furniture selection"><X size={13} /></button>
-          </div>
-          <div className="placement-controls" aria-label={`Position ${selectedItem.name}`}>
-            <span className="placement-control-label"><Move size={13} /> Position and rotation</span>
-            <output className="placement-metrics">
-              X {selectedPlacement.x.toFixed(2)} m · Z {selectedPlacement.z.toFixed(2)} m · {Math.round(selectedPlacement.rotation * 180 / Math.PI)}°
-            </output>
-            <span className="nudge-pad">
-              <button onClick={() => nudgeFurnishing(selectedPlacement.id, 0, -0.1)} aria-label="Move furniture away"><ArrowUp size={14} /></button>
-              <button onClick={() => nudgeFurnishing(selectedPlacement.id, -0.1, 0)} aria-label="Move furniture left"><ArrowDown className="turn-left" size={14} /></button>
-              <button onClick={() => nudgeFurnishing(selectedPlacement.id, 0, 0.1)} aria-label="Move furniture toward"><ArrowDown size={14} /></button>
-              <button onClick={() => nudgeFurnishing(selectedPlacement.id, 0.1, 0)} aria-label="Move furniture right"><ArrowDown className="turn-right" size={14} /></button>
-            </span>
-            <span className="placement-actions">
-              <button onClick={() => rotateFurnishing(selectedPlacement.id, -1)}><RotateCw className="rotate-left" size={13} /> −15°</button>
-              <button onClick={() => rotateFurnishing(selectedPlacement.id, 1)}><RotateCw size={13} /> +15°</button>
-              <button className="mirror-furniture" onClick={() => mirrorFurnishing(selectedPlacement.id)}><FlipHorizontal2 size={13} /> Mirror furniture</button>
-              <button className="back-to-catalogue" onClick={() => setSelectedFurnishingId(null)}><ChevronLeft size={13} /> Back to catalogue</button>
-              <button className="remove-furniture" onClick={() => removeFurnishing(selectedPlacement.id)}><Trash2 size={13} /> Delete furniture</button>
-            </span>
-          </div>
-        </div>
-      )}
-
-      <div className="catalogue-tools">
-        <label className="catalogue-search"><Search size={14} /><span className="sr-only">Search furniture</span><input value={catalogueQuery} onChange={(event) => setCatalogueQuery(event.target.value)} placeholder="Search IKEA furniture" /></label>
-        <div className="catalogue-filters" aria-label="Furniture category">
-          {(["All", "Sofas", "Beds", "Tables", "Chairs"] as const).map((category) => (
-            <button key={category} className={catalogueCategory === category ? "active" : ""} onClick={() => setCatalogueCategory(category)}>{category}</button>
-          ))}
-        </div>
-      </div>
-
-      <div className="catalogue-list">
-        {(["Sofas", "Beds", "Tables", "Chairs"] as const).map((category) => (
-          visibleCatalogue.some((item) => item.category === category) && <section className="catalogue-group" key={category}>
-            <h3>{category}</h3>
-            {visibleCatalogue.filter((item) => item.category === category).map((item) => (
-              <article className="catalogue-card" key={item.id}>
-                <span className="catalogue-icon" style={{ background: item.color }}><FurnitureItemIcon shape={item.shape} size={22} /></span>
-                <span className="catalogue-copy">
-                  <small>{item.collection}</small>
-                  <strong>{item.name}</strong>
-                  <em>W {item.width.toFixed(2)} · D {item.depth.toFixed(2)} · H {item.height.toFixed(2)} m</em>
-                  <span>{item.upholstery}</span>
-                  {item.sourceUrl && <a href={item.sourceUrl} target="_blank" rel="noreferrer">View at IKEA <ExternalLink size={9} /></a>}
-                </span>
-                <button onClick={() => addFurnishing(item)} aria-label={`Add ${item.name} to ${activeLevel.name}`}><Plus size={12} /> Add</button>
-              </article>
-            ))}
-          </section>
-        ))}
-        {visibleCatalogue.length === 0 && <p className="catalogue-empty">No furniture matches “{catalogueQuery}”.</p>}
-      </div>
-
-      <div className="catalogue-note"><ShieldCheck size={15} /><span>Drag freely through rooms. Overlaps turn red and snap back unless released on a clear area. Keyboard: arrows move, Q/E rotate, M mirrors, Delete removes.</span></div>
-    </div>
-  );
-}
-
-function FurnitureItemIcon({ shape, size }: { shape: FurnitureCatalogItem["shape"]; size: number }) {
-  if (shape === "bed") return <BedDouble size={size} />;
-  if (shape === "table") return <Table2 size={size} />;
-  if (shape === "chair" || shape === "armchair" || shape === "stool") return <Armchair size={size} />;
-  return <Sofa size={size} />;
-}
-
-const clampNumber = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
-
-/** Counts of everything the detector claims for one region, for the focus legend. */
-function levelFindings(structure: DetectedStructure | undefined) {
-  if (!structure) return null;
-  const openings = structure.walls.flatMap((wall) => wall.openings);
-  return {
-    heavyWalls: structure.walls.filter((wall) => wall.weight === "heavy").length,
-    lightWalls: structure.walls.filter((wall) => wall.weight === "light").length,
-    doors: openings.filter((opening) => opening.kind === "door").length,
-    windows: openings.filter((opening) => opening.kind === "window").length,
-    stairs: structure.stairs.length,
-    steps: structure.stairs.reduce((sum, stair) => sum + stair.stepCount, 0),
-    rails: structure.walls.reduce((sum, wall) => sum + (wall.railSpans?.length ?? 0), 0),
-    outdoor: structure.outdoorAreas.length,
-    rooms: structure.rooms.length,
-    fixtures: structure.fixtures?.length ?? 0,
-  };
-}
-
-function PlanReview({
-  imageUrl,
-  regions,
-  structures,
-  analysisSize,
-  activeLevel,
-  focusedLevel,
-  selectedWallId,
-  setActiveLevel,
-  setFocusedLevel,
-  setSelectedWallId,
-}: {
-  imageUrl: string | null;
-  regions: SourceRegion[];
-  structures: StructureMap;
-  analysisSize: AnalysisSize | null;
-  activeLevel: string;
-  focusedLevel: string | null;
-  selectedWallId: string | null;
-  setActiveLevel: (id: string) => void;
-  setFocusedLevel: (id: string | null) => void;
-  setSelectedWallId: (id: string | null) => void;
-}) {
-  const focusRegion = focusedLevel ? regions.find((region) => region.id === focusedLevel) ?? null : null;
-  const findings = focusRegion ? levelFindings(structures[focusRegion.id]) : null;
-
-  // Focus mode is laid out against the measured stage rather than the source
-  // sheet: a portrait scan is only a few hundred pixels wide, so scaling inside
-  // its own box left the floor tiny. Measuring lets the chosen floor use the
-  // whole viewport whatever the sheet's proportions are.
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const [viewport, setViewport] = useState({ width: 0, height: 0 });
-  const [zoomLevel, setZoomLevel] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  function toggleReview() { setDraft(null); setSelectedId(null); setPanel(reviewing ? null : "plan"); if (!reviewing) setFocusedLevel(activeLevel); }
+  function openCatalogue() { setDraft(null); setSelectedId(null); setPanel("catalogue"); setWholeBuilding(false); setExploded(false); }
+  function exportProject() { if (project) { downloadProject(project); setNotice("Project file exported. Send this file to share your apartment."); } }
 
   useEffect(() => {
-    const element = viewportRef.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect;
-      if (rect) setViewport({ width: rect.width, height: rect.height });
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [focusedLevel]);
-
-  // Entering a floor always starts from a clean, fitted view. Adjusted during
-  // render rather than in an effect so the first paint of a newly focused floor
-  // is already reset, never briefly showing the previous floor's zoom.
-  const [lastFocused, setLastFocused] = useState(focusedLevel);
-  if (focusedLevel !== lastFocused) {
-    setLastFocused(focusedLevel);
-    setZoomLevel(1);
-    setPan({ x: 0, y: 0 });
-  }
-
-  const layout = useMemo(() => {
-    if (!focusRegion || !analysisSize || viewport.width < 20 || viewport.height < 20) return null;
-    const regionWidth = Math.max(0.02, focusRegion.width);
-    const regionHeight = Math.max(0.02, focusRegion.height);
-    const padding = 20;
-    const availableWidth = Math.max(60, viewport.width - padding * 2);
-    const availableHeight = Math.max(60, viewport.height - padding * 2);
-    // Widest sheet whose region still fits both axes of the stage.
-    const fittedSheetWidth = Math.min(
-      availableWidth / regionWidth,
-      (availableHeight * analysisSize.width) / (regionHeight * analysisSize.height),
-    );
-    const sheetWidth = fittedSheetWidth * zoomLevel;
-    const sheetHeight = sheetWidth * (analysisSize.height / analysisSize.width);
-    const limitX = sheetWidth / 2;
-    const limitY = sheetHeight / 2;
-    const panX = clampNumber(pan.x, -limitX, limitX);
-    const panY = clampNumber(pan.y, -limitY, limitY);
-    const left = (viewport.width - regionWidth * sheetWidth) / 2 - focusRegion.x * sheetWidth + panX;
-    const top = (viewport.height - regionHeight * sheetHeight) / 2 - focusRegion.y * sheetHeight + panY;
-    return {
-      sheet: { width: `${sheetWidth}px`, height: `${sheetHeight}px`, left: `${left}px`, top: `${top}px` },
-      // Dims everything outside the chosen floor, so only it reads as in scope.
-      mask: {
-        left: `${left + focusRegion.x * sheetWidth}px`,
-        top: `${top + focusRegion.y * sheetHeight}px`,
-        width: `${regionWidth * sheetWidth}px`,
-        height: `${regionHeight * sheetHeight}px`,
-      },
+    if (stage !== "workspace") return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const key = event.key.toLowerCase();
+      if (key === "escape") { event.preventDefault(); if (panel) setPanel(null); else { setDraft(null); setSelectedId(null); } return; }
+      if (target?.closest("input, textarea, select, [contenteditable=true]")) return;
+      if ((event.ctrlKey || event.metaKey) && key === "z") { event.preventDefault(); undo(); return; }
+      if (!editing || panel || target?.closest("button, summary, a")) return;
+      if (["arrowleft", "arrowright", "arrowup", "arrowdown", "q", "e", "m", "delete", "backspace", "enter"].includes(key)) event.preventDefault();
+      if (key === "arrowleft") commitMove(editing.id, editing.x - 0.1, editing.z);
+      if (key === "arrowright") commitMove(editing.id, editing.x + 0.1, editing.z);
+      if (key === "arrowup") commitMove(editing.id, editing.x, editing.z - 0.1);
+      if (key === "arrowdown") commitMove(editing.id, editing.x, editing.z + 0.1);
+      if (key === "q" || key === "e") changePlacement({ ...editing, rotation: editing.rotation + (key === "q" ? -1 : 1) * Math.PI / 12 });
+      if (key === "m") changePlacement({ ...editing, mirrored: !editing.mirrored });
+      if (key === "delete" || key === "backspace") { if (draft) setDraft(null); else removeSelected(); }
+      if (key === "enter") finishPlacement();
     };
-  }, [focusRegion, analysisSize, viewport, zoomLevel, pan]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [stage, panel, editing, history, levels, gridSnap]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const beginPan = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!focusRegion) return;
-    dragRef.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-  const movePan = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    setPan({ x: drag.panX + (event.clientX - drag.x), y: drag.panY + (event.clientY - drag.y) });
-  };
-  const endPan = (event: ReactPointerEvent<HTMLDivElement>) => {
-    dragRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-  const nudgeZoom = (factor: number) => setZoomLevel((current) => clampNumber(current * factor, 1, 8));
-
-  return (
-    <div className={`plan-review ${imageUrl ? "has-image" : "sample-review"} ${focusRegion ? "focused" : ""}`}>
-      <div
-        className="plan-viewport"
-        ref={viewportRef}
-        onPointerDown={focusRegion ? beginPan : undefined}
-        onPointerMove={focusRegion ? movePan : undefined}
-        onPointerUp={focusRegion ? endPan : undefined}
-        onPointerCancel={focusRegion ? endPan : undefined}
-        onWheel={focusRegion ? (event) => nudgeZoom(event.deltaY > 0 ? 0.9 : 1.1) : undefined}
-      >
-      <div className="plan-zoom" style={layout?.sheet}>
-      {imageUrl ? <img src={imageUrl} alt="Uploaded floorplan" /> : <SampleSheet />}
-      {analysisSize && (
-        <svg
-          className="structure-overlay"
-          viewBox={`0 0 ${analysisSize.width} ${analysisSize.height}`}
-          preserveAspectRatio="none"
-          aria-label="Detected walls, openings and exterior areas"
-        >
-          {regions.flatMap((region) => structures[region.id]?.outdoorAreas.map((area) => (
-            <rect
-              key={`${region.id}-${area.id}`}
-              className={`detected-outdoor ${activeLevel === region.id ? "active" : ""}`}
-              x={area.x}
-              y={area.y}
-              width={area.width}
-              height={area.height}
-              transform={structures[region.id]?.sourceRotationDegrees && structures[region.id]?.rotationCenter
-                ? `rotate(${structures[region.id].sourceRotationDegrees} ${structures[region.id].rotationCenter?.[0]} ${structures[region.id].rotationCenter?.[1]})`
-                : undefined}
-            />
-          )) ?? [])}
-          {regions.flatMap((region) => structures[region.id]?.stairs.map((stair) => (
-            <g
-              key={`${region.id}-${stair.id}`}
-              className={`detected-stair ${activeLevel === region.id ? "active" : ""}`}
-              transform={structures[region.id]?.sourceRotationDegrees && structures[region.id]?.rotationCenter
-                ? `rotate(${structures[region.id].sourceRotationDegrees} ${structures[region.id].rotationCenter?.[0]} ${structures[region.id].rotationCenter?.[1]})`
-                : undefined}
-            >
-              {/* A turned stair covers an L. Drawing its bounding box instead
-                  claims the corner the stair turns away from, which is open
-                  floor. Draw the winder and the flight when they are known. */}
-              {(stair.winder && stair.flight ? [stair.winder, stair.flight] : [stair]).map((part, partIndex) => {
-                const steps = Math.max(2, Math.round(
-                  Math.min(12, stair.stepCount)
-                  * (stair.winder && stair.flight
-                    ? (stair.runAxis === "vertical" ? part.height : part.width)
-                      / Math.max(1, stair.runAxis === "vertical" ? stair.height : stair.width)
-                    : 1),
-                ));
-                return (
-                  <g key={partIndex}>
-                    <rect x={part.x} y={part.y} width={part.width} height={part.height} />
-                    {Array.from({ length: steps }, (_, index) => {
-                      const progress = (index + 1) / (steps + 1);
-                      return stair.runAxis === "vertical"
-                        ? <line key={index} x1={part.x} x2={part.x + part.width} y1={part.y + part.height * progress} y2={part.y + part.height * progress} />
-                        : <line key={index} y1={part.y} y2={part.y + part.height} x1={part.x + part.width * progress} x2={part.x + part.width * progress} />;
-                    })}
-                  </g>
-                );
-              })}
-            </g>
-          )) ?? [])}
-          {regions.flatMap((region) => structures[region.id]?.walls.map((wall) => (
-            <g
-              key={`${region.id}-${wall.id}`}
-              className={`${activeLevel === region.id ? "active" : ""} ${activeLevel === region.id && selectedWallId === wall.id ? "selected" : ""}`}
-              transform={structures[region.id]?.sourceRotationDegrees && structures[region.id]?.rotationCenter
-                ? `rotate(${structures[region.id].sourceRotationDegrees} ${structures[region.id].rotationCenter?.[0]} ${structures[region.id].rotationCenter?.[1]})`
-                : undefined}
-            >
-              <line
-                className="detected-wall-hit"
-                x1={wall.start[0]}
-                y1={wall.start[1]}
-                x2={wall.end[0]}
-                y2={wall.end[1]}
-                strokeWidth={Math.max(14, wall.thickness * 1.8)}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setActiveLevel(region.id);
-                  setSelectedWallId(wall.id);
-                }}
-              />
-              <line
-                className="detected-wall-halo"
-                x1={wall.start[0]}
-                y1={wall.start[1]}
-                x2={wall.end[0]}
-                y2={wall.end[1]}
-                strokeWidth={Math.max(4, wall.thickness * 1.05)}
-              />
-              <line
-                className="detected-wall"
-                x1={wall.start[0]}
-                y1={wall.start[1]}
-                x2={wall.end[0]}
-                y2={wall.end[1]}
-                strokeWidth={Math.max(2, wall.thickness * 0.72)}
-              />
-              {wall.openings.map((opening, index) => {
-                const dx = wall.end[0] - wall.start[0];
-                const dy = wall.end[1] - wall.start[1];
-                const length = Math.max(1, Math.hypot(dx, dy));
-                const from = opening.offset / length;
-                const to = (opening.offset + opening.width) / length;
-                return (
-                  <line
-                    key={`${wall.id}-opening-${index}`}
-                    className={`detected-opening ${opening.kind}`}
-                    x1={wall.start[0] + dx * from}
-                    y1={wall.start[1] + dy * from}
-                    x2={wall.start[0] + dx * to}
-                    y2={wall.start[1] + dy * to}
-                    strokeWidth={Math.max(4, wall.thickness)}
-                  />
-                );
-              })}
-            </g>
-          )) ?? [])}
-          {regions.flatMap((region) => (structures[region.id]?.fixtures ?? []).map((fixture) => (
-            <rect
-              key={`${region.id}-${fixture.id}`}
-              className={`detected-fixture fixture-${fixture.kind} ${activeLevel === region.id ? "active" : ""}`}
-              x={fixture.x - fixture.width / 2}
-              y={fixture.y - fixture.height / 2}
-              width={fixture.width}
-              height={fixture.height}
-              transform={structures[region.id]?.sourceRotationDegrees && structures[region.id]?.rotationCenter
-                ? `rotate(${structures[region.id].sourceRotationDegrees} ${structures[region.id].rotationCenter?.[0]} ${structures[region.id].rotationCenter?.[1]})`
-                : undefined}
-            >
-              <title>{fixture.kind} ({(fixture.confidence * 100).toFixed(0)}%) {fixture.width.toFixed(0)}×{fixture.height.toFixed(0)}px</title>
-            </rect>
-          )))}
-        </svg>
-      )}
-      {!focusRegion && (
-      <div className="region-overlay">
-        {regions.map((region, index) => (
-          <div
-            key={region.id}
-            className={`region-box ${activeLevel === region.id ? "active" : ""}`}
-            style={{ left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.width * 100}%`, height: `${region.height * 100}%` }}
-            role="button"
-            tabIndex={0}
-            onClick={() => setActiveLevel(region.id)}
-            onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setActiveLevel(region.id); }}
-          >
-            <span>{index + 1}</span>
-            <strong>{region.name}</strong>
-            <em>{Math.round(region.confidence * 100)}%</em>
-            <button
-              className="region-expand"
-              aria-label={`Expand ${region.name} in detail`}
-              onClick={(event) => {
-                event.stopPropagation();
-                setActiveLevel(region.id);
-                setFocusedLevel(region.id);
-              }}
-            >
-              <Maximize2 size={13} />
-            </button>
-          </div>
-        ))}
+  const inputs = <><input ref={fileInput} className="visually-hidden" tabIndex={-1} type="file" aria-label="Upload floorplan image" accept="image/png,image/jpeg,image/webp" onChange={(event) => { void chooseImage(event.target.files?.[0]); event.target.value = ""; }} /><input ref={projectInput} className="visually-hidden" tabIndex={-1} type="file" aria-label="Import project file" accept=".json,.planform.json" onChange={(event) => { void importProject(event.target.files?.[0]); event.target.value = ""; }} /></>;
+  if (stage === "analyzing") return <main className="ws-start"><div className="ws-start-card"><Box size={36} /><h1>Reading your apartment</h1><p role="status">{phase}</p><progress aria-label="Analysing floorplan" /><p>Your image stays on this device.</p><button onClick={() => { intakeGeneration.current++; intakeAbort.current?.abort(); setStage("welcome"); }}>Cancel</button></div></main>;
+  if (stage === "welcome") return <main className="ws-start">{inputs}<div className="ws-start-card"><div className="ws-wordmark"><Box size={26} />PLANFORM</div><p className="ws-eyebrow">A little space to make it yours</p><h1>Your apartment.<br />Your way.</h1><p>Bring in a floorplan and arrange your space, one piece at a time.</p>
+    {lastProject && <button className="ws-continue" onClick={() => openProject(lastProject)}><span><strong>Continue your project</strong><small>{lastProject.name}</small></span><ArrowRight size={20} /></button>}
+    <button className="ws-primary ws-start-upload" onClick={() => fileInput.current?.click()}><Upload size={20} />Upload floorplan</button>
+    <div className="ws-start-secondary"><button onClick={() => projectInput.current?.click()}><FolderOpen size={18} />Import project</button><button onClick={sample}>Try sample <ArrowRight size={18} /></button></div>
+    {notice && <p className="ws-start-error" role="alert">{notice}</p>}<p className="ws-privacy">No account. No upload server. Saved on this device.<br />PNG, JPEG or WebP · up to 20 MB</p></div></main>;
+  return <>{inputs}<WorkspaceShell name={project?.name ?? "Sample apartment"} saveStatus={saveStatus} levels={levels} activeLevel={activeLevel} onFloor={changeFloor} view={view} onView={setView} onFit={() => setFitRequest((value) => value + 1)}
+    onMenu={() => { setDraft(null); setSelectedId(null); setPanel(panel === "project" ? null : "project"); }} onAdd={openCatalogue} onReview={toggleReview} onUndo={undo} canUndo={Boolean(history.past.length || draft)}
+    needsScale={Boolean(project && project.scale.source !== "user")} reviewing={reviewing} panelOpen={Boolean(panel || editing)} notice={notice} clearNotice={() => setNotice("")}
+    panels={<>
+      <WorkspacePanel title="Furniture" open={panel === "catalogue"} onClose={() => setPanel(null)} className="ws-catalogue-panel"><FurnitureLibrary onChoose={chooseFurniture} /></WorkspacePanel>
+      <WorkspacePanel title="Project" open={panel === "project"} onClose={() => setPanel(null)}>
+        <div className="ws-menu-actions"><button disabled={!project} onClick={exportProject}><Download size={18} />Export / share project file</button><button onClick={() => projectInput.current?.click()}><FolderOpen size={18} />Import project</button><button onClick={() => { setNotice(""); setStage("welcome"); }}>Back to start</button></div>
+        <h3>View settings</h3>
+        <details><summary>Furniture on this floor ({furnishings.filter((item) => item.levelId === activeLevel).length})</summary>
+          <div className="ws-menu-actions">{furnishings.filter((item) => item.levelId === activeLevel).map((item) => <button key={item.id} onClick={() => { setWholeBuilding(false); setExploded(false); setSelectedId(item.id); setPanel(null); }}>Edit {furnitureCatalogItem(item.catalogId)?.name ?? item.catalogId}</button>)}</div>
+        </details>
+        <label className="ws-check"><input type="checkbox" checked={wholeBuilding} onChange={(event) => { setWholeBuilding(event.target.checked); setFitRequest((value) => value + 1); }} />Show whole building</label>
+        <label className="ws-check"><input type="checkbox" disabled={!wholeBuilding} checked={exploded} onChange={(event) => setExploded(event.target.checked)} />Separate floors</label>
+        <label>Wall height<select value={wallCutaway} onChange={(event) => setWallCutaway(Number(event.target.value))}><option value={0.32}>Cutaway</option><option value={0.65}>Medium</option><option value={1}>Full height</option></select></label>
+        <label className="ws-check"><input type="checkbox" checked={gridSnap} onChange={(event) => setGridSnap(event.target.checked)} />Snap to 10 cm grid</label>
+        <label className="ws-check"><input type="checkbox" checked={showGrid} onChange={(event) => setShowGrid(event.target.checked)} />Show guide grid (50 cm)</label>
+        <label className="ws-check"><input type="checkbox" checked={showLegend} onChange={(event) => setShowLegend(event.target.checked)} />Show model legend</label>
+        <details><summary>Controls & project info</summary><p>Tap to select. Drag a selected piece to move it. Drag empty space to orbit in 3D or pan in Top. Use two fingers to pan and zoom.</p><p>Keyboard: arrows move 10 cm, Q/E rotate 15°, M mirrors, Delete removes, Esc cancels, Ctrl/Cmd+Z undoes.</p><p>Undo covers this session. Export a copy for backups or sharing; browser storage can be cleared.</p><p>Build {typeof __BUILD_ID__ === "undefined" ? "development" : __BUILD_ID__} · mobile workspace</p></details>
+      </WorkspacePanel>
+      <WorkspacePanel title="Check plan" open={reviewing} onClose={() => setPanel(null)}><PlanControls project={project} activeLevel={activeLevel} selectedWall={selectedWall} onSelectWall={setSelectedWall} onChange={commitProject} onMessage={setNotice} /></WorkspacePanel>
+    </>}
+    context={!panel && editing ? <FurnitureControls placement={editing} draft={Boolean(draft)} issue={draftPreview?.collision ? collisionDescription(draftPreview.collision) : null}
+      onRotate={(degrees) => changePlacement({ ...editing, rotation: editing.rotation + degrees * Math.PI / 180 })} onMirror={() => changePlacement({ ...editing, mirrored: !editing.mirrored })}
+      onNudge={(x, z) => commitMove(editing.id, editing.x + x, editing.z + z)} onDelete={removeSelected} onDone={finishPlacement} onCancel={cancelPlacement} /> : null}>
+      <div ref={editor} className="ws-viewer" role="application" aria-label="Apartment editor" aria-describedby="editor-keyboard-help" tabIndex={0} style={{ visibility: reviewing ? "hidden" : "visible" }} inert={reviewing}>
+        <span id="editor-keyboard-help" className="visually-hidden">Selected furniture: arrows move, Q and E rotate, M mirrors, Enter confirms, Escape cancels. Use Project menu to select existing furniture by name.</span>
+        <ViewerBoundary><Suspense fallback={<div className="viewer-loading">Opening your apartment…</div>}>
+          <TwinViewer decorating={!wholeBuilding && !reviewing} exploded={wholeBuilding && exploded} furnishings={furnishings} gridSnapEnabled={showGrid} levels={levels}
+            onCommitMoveFurnishing={commitMove} onPreviewMoveFurnishing={previewMove} onSelectFurnishing={(id) => { if (!draft) { setSelectedId(id); if (id) setPanel(null); } }}
+            selectedFurnishingId={selectedId} visibleLevels={visibleLevels} wallCutaway={wallCutaway}
+            activeLevel={activeLevel} view={view} fitRequest={fitRequest} active={!reviewing} draft={draft} draftCollision={draftPreview?.collision ?? null}
+            onDraftPosition={(x, z) => { if (draft) { const result = previewMove(draft.id, x, z); setDraft({ ...draft, ...result.position }); } }} showLegend={showLegend} />
+        </Suspense></ViewerBoundary>
       </div>
-      )}
-      </div>
-      {layout && <div className="focus-mask" style={layout.mask} />}
-      </div>
-
-      {focusRegion && findings && (
-        <aside className="focus-legend">
-          <div className="focus-legend-head">
-            <div>
-              <small>REVIEWING</small>
-              <strong>{focusRegion.name}</strong>
-            </div>
-            <button onClick={() => setFocusedLevel(null)} aria-label="Show all levels"><Minimize2 size={14} /> Show all</button>
-          </div>
-          <div className="focus-zoom" role="group" aria-label="Zoom">
-            <button onClick={() => nudgeZoom(1 / 1.35)} aria-label="Zoom out" disabled={zoomLevel <= 1.001}>−</button>
-            <span>{Math.round(zoomLevel * 100)}%</span>
-            <button onClick={() => nudgeZoom(1.35)} aria-label="Zoom in" disabled={zoomLevel >= 7.99}>+</button>
-            <button
-              className="focus-zoom-reset"
-              onClick={() => { setZoomLevel(1); setPan({ x: 0, y: 0 }); }}
-              disabled={zoomLevel <= 1.001 && pan.x === 0 && pan.y === 0}
-            >
-              Reset
-            </button>
-          </div>
-          <ul>
-            <li><i className="k-wall" /><span>Structural walls</span><b>{findings.heavyWalls}</b></li>
-            <li><i className="k-light" /><span>Thin partitions</span><b>{findings.lightWalls}</b></li>
-            <li><i className="k-door" /><span>Doors</span><b>{findings.doors}</b></li>
-            <li><i className="k-window" /><span>Windows</span><b>{findings.windows}</b></li>
-            <li><i className="k-stair" /><span>Stairs{findings.stairs ? ` · ${findings.steps} steps` : ""}</span><b>{findings.stairs}</b></li>
-            <li><i className="k-rail" /><span>Balustrades</span><b>{findings.rails}</b></li>
-            <li><i className="k-outdoor" /><span>Balcony / terrace</span><b>{findings.outdoor}</b></li>
-            <li><i className="k-room" /><span>Enclosed rooms</span><b>{findings.rooms}</b></li>
-            <li><i className="k-fixture" /><span>Fixtures</span><b>{findings.fixtures}</b></li>
-          </ul>
-          <p>Counts come from accepted pixel evidence. Anything ambiguous is left out rather than guessed. Drag the plan to move it.</p>
-        </aside>
-      )}
-      {analysisSize && !focusRegion && <div className="detection-legend"><span className="wall" />Walls <span className="opening" />Doors/windows <span className="stair" />Stairs <span className="outdoor" />Balcony</div>}
-    </div>
-  );
-}
-
-function AnalysisScreen({ step }: { step: number }) {
-  const steps = ["Reading the document", "Separating floor regions", "Tracing walls and openings", "Cross-checking the structure"];
-  return (
-    <main className="analysis-screen">
-      <Brand />
-      <div className="analysis-card">
-        <div className="scan-illustration"><span className="scan-beam" /><PlanLines variant="ground" /></div>
-        <p className="eyebrow"><ScanLine size={14} /> Document intake</p>
-        <h1>Finding the plans<br />inside your file.</h1>
-        <div className="analysis-steps">
-          {steps.map((label, index) => (
-            <div key={label} className={index < step ? "done" : index === step ? "current" : ""}>
-              <span>{index < step ? <Check size={14} /> : index + 1}</span><strong>{label}</strong>
-            </div>
-          ))}
-        </div>
-        <p className="analysis-note">Geometry is accepted only when stroke, topology and opening evidence agree.</p>
-      </div>
-    </main>
-  );
-}
-
-function Brand({ compact = false }: { compact?: boolean }) {
-  return (
-    <div className={`brand ${compact ? "compact" : ""}`}>
-      <span className="brand-mark"><i /><i /><i /></span>
-      <span className="brand-word">PLANFORM</span>
-    </div>
-  );
-}
-
-function PromiseCard({ icon, title, copy }: { icon: ReactNode; title: string; copy: string }) {
-  return <div className="promise"><span>{icon}</span><div><strong>{title}</strong><p>{copy}</p></div></div>;
-}
-
-function DetailRow({ label, value, warning = false }: { label: string; value: string; warning?: boolean }) {
-  return <div className="detail-row"><span>{label}</span><strong className={warning ? "warning" : ""}>{value}</strong></div>;
-}
-
-function PlanLines({ variant }: { variant: "ground" | "upper" }) {
-  return (
-    <div className={`plan-lines ${variant}`}>
-      <i className="line line-a" /><i className="line line-b" /><i className="line line-c" /><i className="line line-d" />
-      <i className="line line-e" /><i className="line line-f" /><i className="door-swing" /><i className="room-label label-a">LIVING</i><i className="room-label label-b">ROOM</i>
-    </div>
-  );
-}
-
-function SampleSheet() {
-  return (
-    <div className="sample-sheet">
-      <div className="sheet-title"><strong>SAMPLE RESIDENCE</strong><span>PLAN SET · 1:100</span></div>
-      <div className="sheet-plan first"><PlanLines variant="ground" /></div>
-      <div className="sheet-plan second"><PlanLines variant="upper" /></div>
-      <div className="sheet-label first-label">GROUND FLOOR</div>
-      <div className="sheet-label second-label">FIRST FLOOR</div>
-    </div>
-  );
+      {reviewing && <div className="ws-plan-stage"><PlanReview imageUrl={project?.source.previewDataUrl ?? null} regions={regions} structures={structures} analysisSize={project ? { width: project.source.width, height: project.source.height } : null} activeLevel={activeLevel} focusedLevel={focusedLevel} selectedWallId={selectedWall} setActiveLevel={changeFloor} setFocusedLevel={setFocusedLevel} setSelectedWallId={setSelectedWall} /></div>}
+    </WorkspaceShell></>;
 }

@@ -1,425 +1,117 @@
 "use client";
-
 /* eslint-disable react/no-unknown-property */
-
-import { ContactShadows, OrbitControls } from "@react-three/drei";
-import { Canvas, type ThreeEvent, useLoader } from "@react-three/fiber";
+import { ContactShadows } from "@react-three/drei";
+import { Canvas, useLoader } from "@react-three/fiber";
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { Plane, SRGBColorSpace, TextureLoader, Vector3 } from "three";
-import {
-  buildStairConnections,
-  sceneFootprint,
-  slabPieceTextureUv,
-  slabPieces,
-  stairwellOpening,
-  type SlabPiece,
-  type StairConnection,
-  type StairwellOpening,
-} from "./scene-geometry";
+import { Group, SRGBColorSpace, TextureLoader } from "three";
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
+import { buildStairConnections, slabPieceTextureUv, slabPieces, stairwellOpening, type SlabPiece, type StairConnection, type StairwellOpening } from "./scene-geometry";
 import { type Fixture, type Level, type Opening, type OutdoorArea, type Wall } from "./scene-data";
-import { furnitureCatalogItem, type FurnitureCatalogItem, type FurniturePlacement } from "./furniture-catalog";
-import type { FurnitureMoveResult, FurniturePosition } from "./furniture-placement";
-import {
-  activateRailSpans,
-  clampWallGapsToRails,
-  stairwellRailSegments,
-  type RailSegment,
-} from "./stairwell-rails";
+import { furnitureCatalogItem, type FurniturePlacement } from "./furniture-catalog";
+import type { FurnitureMoveResult } from "./furniture-placement";
+import { activateRailSpans, clampWallGapsToRails, stairwellRailSegments, type RailSegment } from "./stairwell-rails";
+import { ProceduralFurniture } from "./furniture-model";
+import { WorkspaceCamera } from "./viewer-camera";
+import { ViewerInteraction, type MovePreview } from "./viewer-interaction";
+import { SCENE_Y_OFFSET } from "./workspace-state";
 
 export default function TwinViewer({
-  decorating,
-  exploded,
-  furnishings,
-  gridSnapEnabled,
-  levels,
-  onCommitMoveFurnishing,
-  onPreviewMoveFurnishing,
-  onSelectFurnishing,
-  selectedFurnishingId,
-  visibleLevels,
-  wallCutaway,
+  decorating, exploded, furnishings, gridSnapEnabled, levels, onCommitMoveFurnishing,
+  onPreviewMoveFurnishing, onSelectFurnishing, selectedFurnishingId, visibleLevels, wallCutaway,
+  activeLevel, view, fitRequest, active, draft, draftCollision, onDraftPosition, showLegend,
 }: {
-  decorating: boolean;
-  exploded: boolean;
-  furnishings: FurniturePlacement[];
-  gridSnapEnabled: boolean;
-  levels: Level[];
+  decorating: boolean; exploded: boolean; furnishings: FurniturePlacement[]; gridSnapEnabled: boolean; levels: Level[];
   onCommitMoveFurnishing: (id: string, x: number, z: number) => void;
   onPreviewMoveFurnishing: (id: string, x: number, z: number) => FurnitureMoveResult;
-  onSelectFurnishing: (id: string | null) => void;
-  selectedFurnishingId: string | null;
-  visibleLevels: Set<string>;
-  wallCutaway: number;
+  onSelectFurnishing: (id: string | null) => void; selectedFurnishingId: string | null;
+  visibleLevels: Set<string>; wallCutaway: number; activeLevel: string; view: "perspective" | "top";
+  fitRequest: number; active: boolean; draft: FurniturePlacement | null;
+  draftCollision: FurnitureMoveResult["collision"]; onDraftPosition: (x: number, z: number) => void; showLegend: boolean;
 }) {
-  // Phones have far less GPU headroom than the desktop this was tuned on, and a
-  // stalled frame there reads as the viewer simply never appearing. Measured
-  // once on mount so it cannot churn renders.
-  const [compact] = useState(() => (
-    typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches
-  ));
-  const [draggingFurniture, setDraggingFurniture] = useState(false);
+  const [compact] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches);
+  const [movePreview, setMovePreview] = useState<MovePreview>(null);
+  const controls = useRef<OrbitControlsImpl>(null);
   const explodeDistance = exploded ? 2.35 : 0;
   const stairConnections = buildStairConnections(levels, explodeDistance);
   const stairOpenings = new Map(stairConnections.map((connection) => [connection.upperLevelId, connection.opening]));
-  const footprint = sceneFootprint(levels);
-  // Where the top flight lands on the upper floor: the rail must leave a gap
-  // this wide on that edge, otherwise the stairwell is fenced off and the
-  // floor is unreachable from the stairs. Only the flight-width span opens;
-  // the rest of that edge is still railed.
-  const stairAccess = new Map(stairConnections.map((connection) => [
-    connection.upperLevelId,
-    { point: connection.upperFlight.end, width: connection.width },
-  ]));
-  return (
-    <div className="twin-canvas">
-      <Canvas
-        shadows={!compact}
-        dpr={compact ? [1, 1.5] : [1, 1.75]}
-        camera={{ position: [footprint.centerX + 12, 10, footprint.centerZ + 14], fov: 36, near: 0.1, far: 100 }}
-        onPointerMissed={() => decorating && onSelectFurnishing(null)}
-      >
-        <color attach="background" args={["#ebe9e1"]} />
-        <ambientLight intensity={1.25} />
-        {/* Sky/ground fill replacing drei's <Environment preset>. That helper
-            streams an HDR from an external CDN at runtime, so a slow or blocked
-            request left the whole canvas suspended with nothing on screen. All
-            lighting here is local, so the viewer never waits on the network. */}
-        <hemisphereLight args={["#f4f1e8", "#9d978a", 0.85]} />
-        <directionalLight position={[-8, 9, -6]} intensity={0.45} />
-        <directionalLight position={[7, 12, 6]} intensity={2.1} castShadow={!compact} shadow-mapSize={[1024, 1024]} />
-        <group position={[0, -1.25, 0]}>
-          {levels.map((level, index) => visibleLevels.has(level.id) && (
-            <LevelModel
-              key={level.id}
-              level={level}
-              opening={index > 0 ? stairOpenings.get(level.id) ?? stairwellOpening(level) : null}
-              access={index > 0 ? stairAccess.get(level.id) ?? null : null}
-              explodeOffset={index * explodeDistance}
-              furnishings={furnishings.filter((placement) => placement.levelId === level.id)}
-              decorating={decorating}
-              gridSnapEnabled={gridSnapEnabled}
-              onDragStateChange={setDraggingFurniture}
-              onCommitMoveFurnishing={onCommitMoveFurnishing}
-              onPreviewMoveFurnishing={onPreviewMoveFurnishing}
-              onSelectFurnishing={onSelectFurnishing}
-              selectedFurnishingId={selectedFurnishingId}
-              wallCutaway={wallCutaway}
-            />
-          ))}
-          {stairConnections.map((connection) => (
-            visibleLevels.has(connection.lowerLevelId) && visibleLevels.has(connection.upperLevelId)
-              ? <StairConnectionModel key={connection.id} connection={connection} />
-              : null
-          ))}
-          <ContactShadows position={[0, -0.03, 0]} opacity={0.24} scale={24} blur={2.8} far={12} />
-        </group>
-        <OrbitControls enabled={!draggingFurniture} makeDefault minDistance={7} maxDistance={30} minPolarAngle={0.35} maxPolarAngle={Math.PI / 2.05} target={[footprint.centerX, 2.2, footprint.centerZ]} />
-      </Canvas>
-      <div className="viewer-legend"><span><i className="legend-wall" /> Structure</span><span><i className="legend-door" /> Doors</span><span><i className="legend-window" /> Windows</span><span><i className="legend-stair" /> Stairs</span><span><i className="legend-outdoor" /> Balcony</span><span><i className="legend-fixture" /> Fixtures</span><span><i className="legend-detail" /> Plan details</span></div>
-    </div>
-  );
+  const stairAccess = new Map(stairConnections.map((connection) => [connection.upperLevelId, { point: connection.upperFlight.end, width: connection.width }]));
+  const level = levels.find((item) => item.id === activeLevel) ?? levels[0];
+  const wholeBuilding = visibleLevels.size > 1;
+  return <div className="twin-canvas">
+    <Canvas shadows={!compact} dpr={compact ? [1, 1.5] : [1, 1.75]} frameloop={active ? "demand" : "never"}>
+      <color attach="background" args={["#ebe9e1"]} />
+      <ambientLight intensity={1.25} />
+      <hemisphereLight args={["#f4f1e8", "#9d978a", 0.85]} />
+      <directionalLight position={[-8, 9, -6]} intensity={0.45} />
+      <directionalLight position={[7, 12, 6]} intensity={2.1} castShadow={!compact} shadow-mapSize={[1024, 1024]} />
+      <group position={[0, SCENE_Y_OFFSET, 0]}>
+        {levels.map((current, index) => visibleLevels.has(current.id) && <LevelModel key={current.id}
+          level={current} opening={index > 0 ? stairOpenings.get(current.id) ?? stairwellOpening(current) : null}
+          access={index > 0 ? stairAccess.get(current.id) ?? null : null} explodeOffset={index * explodeDistance}
+          furnishings={furnishings.filter((placement) => placement.levelId === current.id)}
+          decorating={decorating} gridSnapEnabled={gridSnapEnabled} selectedFurnishingId={selectedFurnishingId}
+          movePreview={movePreview} wallCutaway={wallCutaway} />)}
+        {draft && <PlacedFurnitureModel placement={draft} elevation={level.elevation} selected preview
+          movePreview={movePreview?.id === draft.id ? movePreview.result : null} collision={draftCollision} />}
+        {/* Isolating a floor hides the neighbouring slab, not its connected stair. */}
+        {stairConnections.map((connection) => visibleLevels.has(connection.lowerLevelId) || visibleLevels.has(connection.upperLevelId)
+          ? <StairConnectionModel key={connection.id} connection={connection} /> : null)}
+        <ContactShadows position={[0, -0.03, 0]} opacity={0.24} scale={24} blur={2.8} far={12} />
+      </group>
+      <WorkspaceCamera view={view} level={level} levels={levels} wholeBuilding={wholeBuilding} exploded={exploded} fitRequest={fitRequest} controls={controls} />
+      <ViewerInteraction controls={controls} enabled={decorating && active} elevation={level.elevation}
+        furnishings={furnishings} selectedId={selectedFurnishingId} draft={draft} onPreview={onPreviewMoveFurnishing}
+        onMovePreview={setMovePreview} onCommit={onCommitMoveFurnishing} onSelect={onSelectFurnishing} onDraftPosition={onDraftPosition} />
+    </Canvas>
+    {showLegend && <div className="viewer-legend"><span><i className="legend-wall" />Structure</span><span><i className="legend-door" />Doors</span><span><i className="legend-window" />Windows</span><span><i className="legend-stair" />Stairs</span><span><i className="legend-fixture" />Fixtures</span></div>}
+  </div>;
 }
-
-function LevelModel({
-  decorating,
-  level,
-  opening,
-  access,
-  explodeOffset,
-  furnishings,
-  gridSnapEnabled,
-  onDragStateChange,
-  onCommitMoveFurnishing,
-  onPreviewMoveFurnishing,
-  onSelectFurnishing,
-  selectedFurnishingId,
-  wallCutaway,
-}: {
-  decorating: boolean;
-  level: Level;
-  opening: StairwellOpening | null;
-  access: { point: [number, number]; width: number } | null;
-  explodeOffset: number;
-  furnishings: FurniturePlacement[];
-  gridSnapEnabled: boolean;
-  onDragStateChange: (dragging: boolean) => void;
-  onCommitMoveFurnishing: (id: string, x: number, z: number) => void;
-  onPreviewMoveFurnishing: (id: string, x: number, z: number) => FurnitureMoveResult;
-  onSelectFurnishing: (id: string | null) => void;
-  selectedFurnishingId: string | null;
-  wallCutaway: number;
+function LevelModel({ decorating, level, opening, access, explodeOffset, furnishings, gridSnapEnabled, selectedFurnishingId, movePreview, wallCutaway }: {
+  decorating: boolean; level: Level; opening: StairwellOpening | null; access: { point: [number, number]; width: number } | null;
+  explodeOffset: number; furnishings: FurniturePlacement[]; gridSnapEnabled: boolean; selectedFurnishingId: string | null;
+  movePreview: MovePreview; wallCutaway: number;
 }) {
   const y = level.elevation + explodeOffset;
   const pieces = slabPieces(level, opening);
-  // Rails are computed once, then the wall gaps are cut to match them, so a
-  // wall can never lose geometry that no railing fills.
   const candidates = useMemo(() => activateRailSpans(level.walls, opening), [level.walls, opening]);
-  const railSegments = useMemo(
-    () => (opening ? stairwellRailSegments(opening, candidates, access) : []),
-    [opening, candidates, access],
-  );
+  const railSegments = useMemo(() => opening ? stairwellRailSegments(opening, candidates, access) : [], [opening, candidates, access]);
   const walls = useMemo(() => clampWallGapsToRails(candidates, railSegments), [candidates, railSegments]);
-  return (
-    <group>
-      {pieces.map((piece) => <SlabPieceModel key={piece.id} piece={piece} elevation={y} />)}
-      {decorating && gridSnapEnabled && (
-        <gridHelper
-          args={[
-            Math.ceil(Math.max(level.slab.width, level.slab.depth)),
-            Math.max(2, Math.ceil(Math.max(level.slab.width, level.slab.depth) / 0.5)),
-            "#6680c5",
-            "#b7c2dd",
-          ]}
-          position={[level.slab.x, y + 0.081, level.slab.z]}
-        />
-      )}
-      {level.floorTextureUrl && <PlanFloor level={level} pieces={pieces} elevation={y} />}
-      {opening && <StairwellTrim segments={railSegments} elevation={y} />}
-      {(level.outdoorAreas ?? []).map((area) => <OutdoorAreaModel key={area.id} area={area} elevation={y} />)}
-      {(level.fixtures ?? []).map((fixture) => <FurnitureModel key={fixture.id} fixture={fixture} elevation={y} />)}
-      {furnishings.map((placement) => (
-        <PlacedFurnitureModel
-          key={placement.id}
-          decorating={decorating}
-          elevation={y}
-          onDragStateChange={onDragStateChange}
-          onCommitMove={onCommitMoveFurnishing}
-          onPreviewMove={onPreviewMoveFurnishing}
-          onSelect={onSelectFurnishing}
-          placement={placement}
-          selected={selectedFurnishingId === placement.id}
-        />
-      ))}
-      {walls.map((wall) => <WallModel key={wall.id} wall={wall} elevation={y} levelHeight={level.ceilingHeight} wallCutaway={wallCutaway} />)}
-    </group>
-  );
+  return <group>
+    {pieces.map((piece) => <SlabPieceModel key={piece.id} piece={piece} elevation={y} />)}
+    {decorating && gridSnapEnabled && <gridHelper args={[Math.ceil(Math.max(level.slab.width, level.slab.depth)), Math.max(2, Math.ceil(Math.max(level.slab.width, level.slab.depth) / 0.5)), "#6680c5", "#b7c2dd"]} position={[level.slab.x, y + 0.081, level.slab.z]} />}
+    {level.floorTextureUrl && <PlanFloor level={level} pieces={pieces} elevation={y} />}
+    {opening && <StairwellTrim segments={railSegments} elevation={y} />}
+    {(level.outdoorAreas ?? []).map((area) => <OutdoorAreaModel key={area.id} area={area} elevation={y} />)}
+    {(level.fixtures ?? []).map((fixture) => <FurnitureModel key={fixture.id} fixture={fixture} elevation={y} />)}
+    {furnishings.map((placement) => <PlacedFurnitureModel key={placement.id} placement={placement} elevation={y}
+      selected={selectedFurnishingId === placement.id} movePreview={movePreview?.id === placement.id ? movePreview.result : null} />)}
+    {walls.map((wall) => <WallModel key={wall.id} wall={wall} elevation={y} levelHeight={level.ceilingHeight} wallCutaway={wallCutaway} />)}
+  </group>;
 }
-
-function PlacedFurnitureModel({
-  decorating,
-  elevation,
-  onDragStateChange,
-  onCommitMove,
-  onPreviewMove,
-  onSelect,
-  placement,
-  selected,
-}: {
-  decorating: boolean;
-  elevation: number;
-  onDragStateChange: (dragging: boolean) => void;
-  onCommitMove: (id: string, x: number, z: number) => void;
-  onPreviewMove: (id: string, x: number, z: number) => FurnitureMoveResult;
-  onSelect: (id: string) => void;
-  placement: FurniturePlacement;
-  selected: boolean;
+function PlacedFurnitureModel({ placement, elevation, selected, movePreview, preview = false, collision = null }: {
+  placement: FurniturePlacement; elevation: number; selected: boolean; movePreview: FurnitureMoveResult | null; preview?: boolean; collision?: FurnitureMoveResult["collision"];
 }) {
-  const floorY = elevation + 0.06;
-  const [dragging, setDragging] = useState(false);
-  const [draft, setDraft] = useState<FurnitureMoveResult | null>(null);
-  const draftRef = useRef<FurnitureMoveResult | null>(null);
-  const dragPlane = useMemo(() => new Plane(new Vector3(0, 1, 0), -floorY), [floorY]);
-  const dragPoint = useMemo(() => new Vector3(), []);
   const item = furnitureCatalogItem(placement.catalogId);
+  const model = useRef<Group>(null);
+  useEffect(() => {
+    model.current?.traverse((object) => {
+      if (!("material" in object)) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of materials) {
+        material.transparent = preview; material.opacity = preview ? 0.58 : 1; material.depthWrite = !preview;
+      }
+    });
+  }, [preview]);
   if (!item) return null;
-  const bodyDepth = item.bodyDepth ?? item.depth;
-  const bodyZ = item.shape === "chaise" ? (item.depth - bodyDepth) / 2 : 0;
-  const armWidth = Math.min(0.24, item.width * 0.14);
-  const cushionWidth = Math.max(0.25, item.width - armWidth * 2 - 0.06);
-  const legInset = Math.min(0.24, item.width * 0.18);
-  const startDragging = (event: ThreeEvent<PointerEvent>) => {
-    if (!decorating) return;
-    event.stopPropagation();
-    onSelect(placement.id);
-    const initialDraft = { position: { x: placement.x, z: placement.z }, collision: null } satisfies FurnitureMoveResult;
-    draftRef.current = initialDraft;
-    setDraft(initialDraft);
-    setDragging(true);
-    onDragStateChange(true);
-    (event.target as EventTarget & { setPointerCapture(pointerId: number): void }).setPointerCapture(event.pointerId);
-  };
-  const drag = (event: ThreeEvent<PointerEvent>) => {
-    if (!dragging || !decorating) return;
-    event.stopPropagation();
-    if (event.ray.intersectPlane(dragPlane, dragPoint)) {
-      const preview = onPreviewMove(placement.id, dragPoint.x, dragPoint.z);
-      draftRef.current = preview;
-      setDraft(preview);
-    }
-  };
-  const stopDragging = (event: ThreeEvent<PointerEvent>, commit = true) => {
-    if (!dragging) return;
-    event.stopPropagation();
-    setDragging(false);
-    onDragStateChange(false);
-    (event.target as EventTarget & { releasePointerCapture(pointerId: number): void }).releasePointerCapture(event.pointerId);
-    const finalDraft = draftRef.current;
-    if (commit && finalDraft) onCommitMove(placement.id, finalDraft.position.x, finalDraft.position.z);
-    draftRef.current = null;
-    setDraft(null);
-  };
-  const renderPosition: FurniturePosition = draft?.position ?? placement;
-  const invalid = Boolean(draft?.collision);
-  return (
-    <group
-      position={[renderPosition.x, floorY, renderPosition.z]}
-      rotation={[0, placement.rotation, 0]}
-      onClick={(event) => { if (decorating) { event.stopPropagation(); onSelect(placement.id); } }}
-      onPointerDown={startDragging}
-      onPointerMove={drag}
-      onPointerUp={(event) => stopDragging(event)}
-      onPointerCancel={(event) => stopDragging(event, false)}
-    >
-      {selected && (
-        <mesh position={[0, item.height / 2, 0]}>
-          <boxGeometry args={[item.width + 0.08, item.height + 0.08, item.depth + 0.08]} />
-          <meshBasicMaterial color={invalid ? "#d62f2f" : "#2457df"} wireframe transparent opacity={0.8} depthWrite={false} />
-        </mesh>
-      )}
-      {invalid && (
-        <mesh position={[0, item.height / 2, 0]} renderOrder={4}>
-          <boxGeometry args={[item.width + 0.04, item.height + 0.04, item.depth + 0.04]} />
-          <meshBasicMaterial color="#e23636" transparent opacity={0.38} depthWrite={false} />
-        </mesh>
-      )}
-      <group scale={[placement.mirrored ? -1 : 1, 1, 1]}>
-      {item.shape === "bed" ? <BedFurniture item={item} /> : item.shape === "table" ? <TableFurniture item={item} /> : item.shape === "stool" ? <StoolFurniture item={item} /> : item.shape === "chair" || item.shape === "armchair" ? <ChairFurniture item={item} /> : <>
-      {[-1, 1].flatMap((side) => [-1, 1].map((front) => (
-        <mesh key={`${side}-${front}`} position={[side * (item.width / 2 - legInset), 0.08, bodyZ + front * (bodyDepth / 2 - 0.17)]} castShadow>
-          <cylinderGeometry args={[0.035, 0.045, 0.16, 8]} />
-          <meshStandardMaterial color="#4b3b2d" roughness={0.72} />
-        </mesh>
-      )))}
-      <mesh position={[0, 0.22, bodyZ]} castShadow receiveShadow>
-        <boxGeometry args={[item.width, 0.28, Math.max(0.42, bodyDepth - 0.14)]} />
-        <meshStandardMaterial color={item.accentColor} roughness={0.9} />
-      </mesh>
-      <mesh position={[0, 0.42, bodyZ - bodyDepth * 0.08]} castShadow receiveShadow>
-        <boxGeometry args={[cushionWidth, 0.16, Math.max(0.34, bodyDepth * 0.62)]} />
-        <meshStandardMaterial color={item.color} roughness={0.96} />
-      </mesh>
-      <mesh position={[0, 0.3 + (item.height - 0.3) / 2, bodyZ + bodyDepth / 2 - 0.1]} castShadow receiveShadow>
-        <boxGeometry args={[item.width, item.height - 0.3, 0.2]} />
-        <meshStandardMaterial color={item.color} roughness={0.96} />
-      </mesh>
-      {[-1, 1].map((side) => (
-        <mesh key={side} position={[side * (item.width / 2 - armWidth / 2), 0.45, bodyZ - 0.02]} castShadow receiveShadow>
-          <boxGeometry args={[armWidth, 0.54, Math.max(0.42, bodyDepth - 0.12)]} />
-          <meshStandardMaterial color={item.color} roughness={0.96} />
-        </mesh>
-      ))}
-      {item.shape === "chaise" && (
-        <group position={[-item.width * 0.31, 0, 0]}>
-          <mesh position={[0, 0.22, 0]} castShadow receiveShadow>
-            <boxGeometry args={[item.width * 0.34, 0.28, item.depth - 0.16]} />
-            <meshStandardMaterial color={item.accentColor} roughness={0.9} />
-          </mesh>
-          <mesh position={[0, 0.42, -0.03]} castShadow receiveShadow>
-            <boxGeometry args={[item.width * 0.31, 0.16, item.depth - 0.22]} />
-            <meshStandardMaterial color={item.color} roughness={0.96} />
-          </mesh>
-        </group>
-      )}
-      </>}
-      </group>
-    </group>
-  );
-}
-
-function BedFurniture({ item }: { item: FurnitureCatalogItem }) {
-  const frameHeight = Math.min(0.32, item.height * 0.46);
-  const headboardHeight = item.height;
-  const mattressWidth = Math.max(0.3, item.width - 0.14);
-  const mattressDepth = Math.max(0.5, item.depth - 0.16);
-  return (
-    <group>
-      <mesh position={[0, frameHeight / 2, 0]} castShadow receiveShadow>
-        <boxGeometry args={[item.width, frameHeight, item.depth]} />
-        <meshStandardMaterial color={item.accentColor} roughness={0.76} />
-      </mesh>
-      <mesh position={[0, frameHeight + 0.09, -0.02]} castShadow receiveShadow>
-        <boxGeometry args={[mattressWidth, 0.18, mattressDepth]} />
-        <meshStandardMaterial color="#f0eee6" roughness={0.98} />
-      </mesh>
-      <mesh position={[0, headboardHeight / 2, item.depth / 2 - 0.045]} castShadow receiveShadow>
-        <boxGeometry args={[item.width, headboardHeight, 0.09]} />
-        <meshStandardMaterial color={item.color} roughness={0.82} />
-      </mesh>
-      <mesh position={[0, frameHeight + 0.22, item.depth * 0.27]} castShadow>
-        <boxGeometry args={[mattressWidth * 0.72, 0.14, Math.min(0.38, item.depth * 0.2)]} />
-        <meshStandardMaterial color="#d9d4c9" roughness={1} />
-      </mesh>
-    </group>
-  );
-}
-
-function TableFurniture({ item }: { item: FurnitureCatalogItem }) {
-  const topThickness = Math.min(0.1, item.height * 0.14);
-  const legWidth = Math.min(0.09, item.width * 0.12, item.depth * 0.12);
-  const legHeight = item.height - topThickness;
-  const xInset = Math.max(legWidth, item.width / 2 - legWidth * 1.25);
-  const zInset = Math.max(legWidth, item.depth / 2 - legWidth * 1.25);
-  return (
-    <group>
-      <mesh position={[0, item.height - topThickness / 2, 0]} castShadow receiveShadow>
-        <boxGeometry args={[item.width, topThickness, item.depth]} />
-        <meshStandardMaterial color={item.color} roughness={0.72} />
-      </mesh>
-      {[-1, 1].flatMap((side) => [-1, 1].map((front) => (
-        <mesh key={`${side}-${front}`} position={[side * xInset, legHeight / 2, front * zInset]} castShadow>
-          <boxGeometry args={[legWidth, legHeight, legWidth]} />
-          <meshStandardMaterial color={item.accentColor} roughness={0.8} />
-        </mesh>
-      )))}
-    </group>
-  );
-}
-
-function ChairFurniture({ item }: { item: FurnitureCatalogItem }) {
-  const seatHeight = Math.min(0.45, item.height * 0.58);
-  const seatThickness = 0.08;
-  const legWidth = Math.min(0.045, item.width * 0.1);
-  const xInset = item.width / 2 - legWidth * 1.4;
-  const zInset = item.depth / 2 - legWidth * 1.4;
-  return (
-    <group>
-      {[-1, 1].flatMap((side) => [-1, 1].map((front) => (
-        <mesh key={`${side}-${front}`} position={[side * xInset, seatHeight / 2, front * zInset]} castShadow>
-          <boxGeometry args={[legWidth, seatHeight, legWidth]} />
-          <meshStandardMaterial color={item.accentColor} roughness={0.76} />
-        </mesh>
-      )))}
-      <mesh position={[0, seatHeight, -0.015]} castShadow receiveShadow>
-        <boxGeometry args={[item.width, seatThickness, Math.max(0.25, item.depth * 0.72)]} />
-        <meshStandardMaterial color={item.color} roughness={0.86} />
-      </mesh>
-      <mesh position={[0, seatHeight + (item.height - seatHeight) / 2, item.depth / 2 - 0.045]} castShadow receiveShadow>
-        <boxGeometry args={[item.width, item.height - seatHeight, 0.09]} />
-        <meshStandardMaterial color={item.color} roughness={0.86} />
-      </mesh>
-    </group>
-  );
-}
-
-function StoolFurniture({ item }: { item: FurnitureCatalogItem }) {
-  const seatHeight = Math.min(0.72, item.height * 0.82);
-  const seatThickness = Math.min(0.09, item.height * 0.13);
-  return (
-    <group>
-      <mesh position={[0, seatHeight, 0]} castShadow receiveShadow>
-        <cylinderGeometry args={[Math.min(item.width, item.depth) * 0.43, Math.min(item.width, item.depth) * 0.43, seatThickness, 20]} />
-        <meshStandardMaterial color={item.color} roughness={0.78} />
-      </mesh>
-      <mesh position={[0, seatHeight / 2, 0]} castShadow>
-        <cylinderGeometry args={[0.035, 0.055, Math.max(0.08, seatHeight), 10]} />
-        <meshStandardMaterial color={item.accentColor} roughness={0.72} />
-      </mesh>
-      <mesh position={[0, 0.045, 0]} castShadow>
-        <cylinderGeometry args={[Math.min(item.width, item.depth) * 0.36, Math.min(item.width, item.depth) * 0.45, 0.06, 12]} />
-        <meshStandardMaterial color={item.accentColor} roughness={0.78} />
-      </mesh>
-    </group>
-  );
+  const position = movePreview?.position ?? placement;
+  const invalid = Boolean(movePreview?.collision ?? collision);
+  return <group position={[position.x, elevation + 0.06, position.z]} rotation={[0, placement.rotation, 0]} userData={{ furnitureId: placement.id }}>
+    {selected && <mesh position={[0, item.height / 2, 0]}>
+      <boxGeometry args={[item.width + 0.08, item.height + 0.08, item.depth + 0.08]} />
+      <meshBasicMaterial color={invalid ? "#d62f2f" : "#267064"} wireframe transparent opacity={0.85} depthWrite={false} />
+    </mesh>}
+    <group ref={model} scale={[placement.mirrored ? -1 : 1, 1, 1]}><ProceduralFurniture item={item} /></group>
+  </group>;
 }
 
 function SlabPieceModel({ piece, elevation }: { piece: SlabPiece; elevation: number }) {

@@ -16,13 +16,14 @@ function openDatabase() {
 }
 
 export async function saveProjectLocally(document: FloorplanDocumentV2) {
-  if (typeof indexedDB === "undefined") return;
+  if (typeof indexedDB === "undefined") throw new Error("Local storage is not available.");
   const database = await openDatabase();
   await new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(STORE_NAME, "readwrite");
     transaction.objectStore(STORE_NAME).put(document);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error ?? new Error("Save was interrupted."));
   });
   database.close();
 }

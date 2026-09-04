@@ -21,7 +21,7 @@ test("server-renders the Planform product shell", async () => {
   const html = await response.text();
   assert.match(html, /<title>Planform/);
   assert.match(html, /PLANFORM/);
-  assert.match(html, /Upload your floorplan/);
-  assert.match(html, /Explore the sample residence/);
+  assert.match(html, /Upload floorplan/);
+  assert.match(html, /Try sample/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
