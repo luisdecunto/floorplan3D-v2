@@ -1,13 +1,14 @@
 "use client";
 /* eslint-disable jsx-a11y/no-noninteractive-tabindex -- The custom 3D application is a keyboard interaction surface with documented arrow/rotate/cancel bindings. */
 import "./workspace.css";
-import { Box, Upload, FolderOpen, ArrowRight, Download } from "lucide-react";
+import { Box, Upload, FolderOpen, ArrowRight, Download, Share2 } from "lucide-react";
 import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { sampleLevels } from "./scene-data";
 import { furnitureCatalogItem, type FurnitureCatalogItem, type FurniturePlacement } from "./furniture-catalog";
 import { findNearestValidFurniturePosition, type FurnitureMoveResult } from "./furniture-placement";
 import { createFloorplanDocumentV2, documentRegions, documentStructures, documentSceneLevels, type FloorplanDocumentV2 } from "./floorplan-document";
 import { downloadProject, parseProject } from "./project-storage";
+import { createProjectShareUrl, decodeSharedProject, sharedProjectPayload, ShareLinkTooLargeError } from "./project-share";
 import { inspectFloorplan } from "./floorplan-intake";
 import { useWorkspaceProject } from "./use-workspace-project";
 import { collisionDescription, confirmPlacement, placementObstacles, previewPlacement, projectFurnishings, withFurnishings } from "./workspace-state";
@@ -20,6 +21,7 @@ import PlanReview from "./plan-review";
 
 const TwinViewer = lazy(() => import("./twin-viewer"));
 type Panel = "catalogue" | "project" | "plan" | null;
+function hasStartupShare() { return typeof window !== "undefined" && Boolean(sharedProjectPayload(window.location.hash)); }
 class ViewerBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
@@ -30,8 +32,8 @@ class ViewerBoundary extends Component<{ children: ReactNode }, { failed: boolea
 }
 export default function Home() {
   const { history, dispatch, project, lastProject, saveStatus } = useWorkspaceProject();
-  const [stage, setStage] = useState<"welcome" | "analyzing" | "workspace">("welcome");
-  const [phase, setPhase] = useState("Reading image…");
+  const [stage, setStage] = useState<"welcome" | "analyzing" | "workspace">(() => hasStartupShare() ? "analyzing" : "welcome");
+  const [phase, setPhase] = useState(() => hasStartupShare() ? "Opening shared apartment…" : "Reading image…");
   const [panel, setPanel] = useState<Panel>(null);
   const [activeLevel, setActiveLevel] = useState("ground");
   const [focusedLevel, setFocusedLevel] = useState<string | null>(null);
@@ -47,10 +49,12 @@ export default function Home() {
   const [gridSnap, setGridSnap] = useState(true);
   const [showGrid, setShowGrid] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
   const intakeGeneration = useRef(0);
   const intakeAbort = useRef<AbortController | null>(null);
+  const sharedProjectStarted = useRef(false);
   const editor = useRef<HTMLDivElement>(null);
   const furnishings = useMemo(() => projectFurnishings(history.present), [history.present]);
   const levels = useMemo(() => project ? documentSceneLevels(project) : sampleLevels, [project]);
@@ -112,6 +116,23 @@ export default function Home() {
     setDraft(null); setSelectedId(null); setSelectedWall(null); setActiveLevel(id); setFocusedLevel(id);
     setWholeBuilding(false); setExploded(false);
   }
+  useEffect(() => {
+    if (sharedProjectStarted.current) return;
+    const payload = sharedProjectPayload(window.location.hash);
+    if (!payload) return;
+    sharedProjectStarted.current = true;
+    void decodeSharedProject(payload).then((shared) => {
+      const now = new Date().toISOString();
+      const copy = { ...shared, id: `project-${crypto.randomUUID()}`, name: `${shared.name} · shared copy`, createdAt: now, updatedAt: now };
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      openProject(copy);
+      setNotice("Shared apartment opened as an editable copy and saved on this device.");
+    }).catch((error: unknown) => {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      setStage("welcome");
+      setNotice(error instanceof Error ? error.message : "This shared apartment could not be opened.");
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- A share hash is consumed once when the application starts.
   function changeWholeBuilding(show: boolean) {
     if (draft) setNotice("Preview cancelled when changing house view.");
     setDraft(null); setSelectedId(null); setWholeBuilding(show);
@@ -166,6 +187,34 @@ export default function Home() {
   function toggleReview() { setDraft(null); setSelectedId(null); setPanel(reviewing ? null : "plan"); if (!reviewing) setFocusedLevel(activeLevel); }
   function openCatalogue() { setDraft(null); setSelectedId(null); setPanel("catalogue"); }
   function exportProject() { if (project) { downloadProject(project); setNotice("Project file exported. Send this file to share your apartment."); } }
+  async function copyShareLink(url: string) {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(url); return; }
+    const field = document.createElement("textarea");
+    field.value = url; field.setAttribute("readonly", ""); field.style.position = "fixed"; field.style.opacity = "0";
+    document.body.appendChild(field); field.select();
+    const copied = document.execCommand("copy"); field.remove();
+    if (!copied) throw new Error("Copy failed");
+  }
+  async function shareProject() {
+    if (!project || sharing) return;
+    setSharing(true);
+    try {
+      const applicationUrl = new URL(import.meta.env.BASE_URL, window.location.origin).href;
+      const url = await createProjectShareUrl(project, applicationUrl);
+      if (navigator.share) {
+        await navigator.share({ title: project.name, text: "Open this apartment in Planform", url });
+        setNotice("Share link sent. It contains a snapshot of your apartment, without the original floorplan image.");
+      } else {
+        await copyShareLink(url);
+        setNotice("Share link copied. It contains a snapshot of your apartment, without the original floorplan image.");
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setNotice(error instanceof ShareLinkTooLargeError
+        ? "This apartment is too large for a reliable link. Export the project file instead."
+        : "The share link could not be created. Export the project file instead.");
+    } finally { setSharing(false); }
+  }
 
   useEffect(() => {
     if (stage !== "workspace") return;
@@ -204,7 +253,7 @@ export default function Home() {
     panels={<>
       <WorkspacePanel title="Furniture" open={panel === "catalogue"} onClose={() => setPanel(null)} className="ws-catalogue-panel"><FurnitureLibrary onChoose={chooseFurniture} /></WorkspacePanel>
       <WorkspacePanel title="Project" open={panel === "project"} onClose={() => setPanel(null)}>
-        <div className="ws-menu-actions"><button disabled={!project} onClick={exportProject}><Download size={18} />Export / share project file</button><button onClick={() => projectInput.current?.click()}><FolderOpen size={18} />Import project</button><button onClick={() => { setNotice(""); setStage("welcome"); }}>Back to start</button></div>
+        <div className="ws-menu-actions"><button disabled={!project || sharing} onClick={() => void shareProject()}><Share2 size={18} />{sharing ? "Preparing share link…" : "Share apartment link"}</button><button disabled={!project} onClick={exportProject}><Download size={18} />Export project file</button><button onClick={() => projectInput.current?.click()}><FolderOpen size={18} />Import project</button><button onClick={() => { setNotice(""); setStage("welcome"); }}>Back to start</button></div>
         <h3>View settings</h3>
         <details><summary>Furniture on this floor ({furnishings.filter((item) => item.levelId === activeLevel).length})</summary>
           <div className="ws-menu-actions">{furnishings.filter((item) => item.levelId === activeLevel).map((item) => <button key={item.id} onClick={() => { setWholeBuilding(false); setExploded(false); setSelectedId(item.id); setPanel(null); }}>Edit {furnitureCatalogItem(item.catalogId)?.name ?? item.catalogId}</button>)}</div>
@@ -213,7 +262,7 @@ export default function Home() {
         <label className="ws-check"><input type="checkbox" checked={gridSnap} onChange={(event) => setGridSnap(event.target.checked)} />Snap to 10 cm grid</label>
         <label className="ws-check"><input type="checkbox" checked={showGrid} onChange={(event) => setShowGrid(event.target.checked)} />Show guide grid (50 cm)</label>
         <label className="ws-check"><input type="checkbox" checked={showLegend} onChange={(event) => setShowLegend(event.target.checked)} />Show model legend</label>
-        <details><summary>Controls & project info</summary><p>Tap to select. Drag a selected piece to move it. Drag empty space to orbit in 3D or pan in Top. Use two fingers to pan and zoom.</p><p>Keyboard: arrows move 10 cm, Q/E rotate 15°, M mirrors, Delete removes, Esc cancels, Ctrl/Cmd+Z undoes.</p><p>Undo covers this session. Export a copy for backups or sharing; browser storage can be cleared.</p><p>Build {typeof __BUILD_ID__ === "undefined" ? "development" : __BUILD_ID__} · mobile workspace</p></details>
+        <details><summary>Controls & project info</summary><p>Tap to select. Drag a selected piece to move it. Drag empty space to orbit in 3D or pan in Top. Use two fingers to pan and zoom.</p><p>Keyboard: arrows move 10 cm, Q/E rotate 15°, M mirrors, Delete removes, Esc cancels, Ctrl/Cmd+Z undoes.</p><p>Share creates an editable snapshot link without the original floorplan image. Export a file for backups or apartments too large for a link.</p><p>Build {typeof __BUILD_ID__ === "undefined" ? "development" : __BUILD_ID__} · mobile workspace</p></details>
       </WorkspacePanel>
       <WorkspacePanel title="Check plan" open={reviewing} onClose={() => setPanel(null)}><PlanControls project={project} activeLevel={activeLevel} selectedWall={selectedWall} onSelectWall={setSelectedWall} onChange={commitProject} onMessage={setNotice} /></WorkspacePanel>
     </>}

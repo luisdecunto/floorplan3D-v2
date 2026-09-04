@@ -47,6 +47,9 @@ test("GitHub Pages bundle includes wall-safe furniture editing controls", async 
   assert.match(javascript, /Whole house/);
   assert.match(javascript, /ws-wall-height/);
   assert.match(javascript, /% of full wall height/);
+  assert.match(javascript, /Share apartment link/);
+  assert.match(javascript, /Opening shared apartment/);
+  assert.match(javascript, /without the original floorplan image/);
   assert.doesNotMatch(javascript, /fetch\("\/api\/share/);
   assert.match(javascript, /Mirror furniture/);
   assert.match(javascript, /Delete furniture/);
@@ -58,6 +61,7 @@ test("GitHub Pages bundle includes wall-safe furniture editing controls", async 
   assert.match(javascript, /SALTVIG rattan-door cupboard/);
   assert.match(javascript, /JYSK/);
   assert.match(javascript, /Furniture brand/);
+  assert.match(javascript, /View at/);
 });
 
 test("all furniture previews are static local SVGs and test harness is not deployed", async () => {

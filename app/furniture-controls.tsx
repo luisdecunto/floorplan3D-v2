@@ -1,6 +1,6 @@
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FlipHorizontal2, RotateCcw, RotateCw, Trash2, Check, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FlipHorizontal2, RotateCcw, RotateCw, Trash2, Check, X, ExternalLink } from "lucide-react";
 import type { FurniturePlacement } from "./furniture-catalog";
-import { furnitureCatalogItem } from "./furniture-catalog";
+import { furnitureBrand, furnitureCatalogItem } from "./furniture-catalog";
 
 export function FurnitureControls({ placement, draft, issue, onRotate, onMirror, onNudge, onDelete, onDone, onCancel }: {
   placement: FurniturePlacement; draft: boolean; issue: string | null;
@@ -11,6 +11,7 @@ export function FurnitureControls({ placement, draft, issue, onRotate, onMirror,
   return <section className={`ws-context ${issue ? "invalid" : ""}`} aria-label={draft ? "Placement preview" : "Selected furniture"}>
     <div className="ws-context-title"><div><small>{draft ? "PREVIEW · NOT SAVED" : "SELECTED"}</small><strong>{item?.name ?? "Furniture"}</strong></div>
       <button className="ws-icon" aria-label={draft ? "Cancel placement" : "Deselect furniture"} onClick={onCancel}><X size={20} /></button></div>
+    {item?.sourceUrl && <a className="ws-context-product-link" href={item.sourceUrl} target="_blank" rel="noreferrer">View at {furnitureBrand(item)} <ExternalLink size={15} /></a>}
     {draft && <p className="ws-placement-hint" role="status">{issue ?? "Tap the floor or drag to position. Place when ready."}</p>}
     <div className="ws-context-actions">
       <button onClick={() => onRotate(90)} aria-label="Rotate furniture 90 degrees"><RotateCw size={18} />90°</button>

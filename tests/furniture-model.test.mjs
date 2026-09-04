@@ -12,6 +12,7 @@ const server = await createServer({ root: fileURLToPath(new URL("../", import.me
 after(() => server.close());
 const { ProceduralFurniture } = await server.ssrLoadModule("/app/furniture-model.tsx");
 const { FurnitureLibrary } = await server.ssrLoadModule("/app/furniture-library.tsx");
+const { FurnitureControls } = await server.ssrLoadModule("/app/furniture-controls.tsx");
 
 test("catalogue renders retailer-correct links, new categories and a brand selector", () => {
   const html = renderToStaticMarkup(createElement(FurnitureLibrary, { onChoose: () => {} }));
@@ -21,6 +22,14 @@ test("catalogue renders retailer-correct links, new categories and a brand selec
   for (const name of ["Wardrobes", "Cupboards", "Coffee tables"]) assert.ok(html.includes(name));
   assert.match(html, /jysk-billund-3611113\.svg/);
   assert.match(html, /href="https:\/\/jysk\.dk\/[^"]+"[^>]*>View at JYSK/);
+});
+
+test("selected retailer furniture keeps its product link within reach", () => {
+  const html = renderToStaticMarkup(createElement(FurnitureControls, {
+    placement: { id: "wardrobe", catalogId: "jysk-billund-3611113", levelId: "ground", x: 0, z: 0, rotation: 0 },
+    draft: false, issue: null, onRotate: () => {}, onMirror: () => {}, onNudge: () => {}, onDelete: () => {}, onDone: () => {}, onCancel: () => {},
+  }));
+  assert.match(html, /href="https:\/\/jysk\.dk\/[^\"]+"[^>]*>View at JYSK/);
 });
 
 function meshes(element, parent = new Matrix4()) {

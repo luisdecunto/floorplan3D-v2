@@ -90,6 +90,7 @@
 .ws-context-title > div { display: flex; flex-direction: column; min-width: 0; }
 .ws-context-title small { font-size: 10px; color: #567962; letter-spacing: .1em; }
 .ws-context-title strong { font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; font-weight: 600; }
+.ws-context-product-link { display: inline-flex; align-items: center; gap: 5px; min-height: 44px; color: #23675c; font-size: 14px; font-weight: 600; }
 .ws-app .ws-placement-hint { font-size: 13px; color: #586e62; margin: 6px 0 10px; }
 .ws-context.invalid .ws-placement-hint { color: #ad3632; }
 .ws-context-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
