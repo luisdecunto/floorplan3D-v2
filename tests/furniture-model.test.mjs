@@ -29,7 +29,7 @@ test("selected retailer furniture keeps its product link within reach", () => {
     placement: { id: "wardrobe", catalogId: "jysk-billund-3611113", levelId: "ground", x: 0, z: 0, rotation: 0 },
     draft: false, issue: null, onRotate: () => {}, onMirror: () => {}, onNudge: () => {}, onDelete: () => {}, onDone: () => {}, onCancel: () => {},
   }));
-  assert.match(html, /href="https:\/\/jysk\.dk\/[^\"]+"[^>]*>View at JYSK/);
+  assert.match(html, /href="https:\/\/jysk\.dk\/[^"]+"[^>]*>View at JYSK/);
 });
 
 function meshes(element, parent = new Matrix4()) {
