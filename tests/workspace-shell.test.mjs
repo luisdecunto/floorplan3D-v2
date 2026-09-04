@@ -13,6 +13,7 @@ const server = await createServer({
 });
 after(() => server.close());
 const { WorkspaceShell } = await server.ssrLoadModule("/app/workspace-shell.tsx");
+const { PANEL_SWIPE_THRESHOLD, panelExpansionAfterSwipe } = await server.ssrLoadModule("/app/workspace-panel.tsx");
 const noop = () => {};
 function shell(overrides = {}) {
   return WorkspaceShell({
@@ -72,4 +73,11 @@ test("floor selector still passes the exact floor ID in whole-house view", () =>
   const tree = shell({ wholeBuilding: true, onFloor: (value) => { changed = value; } });
   elements(tree).find((element) => element.type === "select").props.onChange({ target: { value: "upper" } });
   assert.equal(changed, "upper");
+});
+
+test("bottom-sheet swipes snap upward to full catalogue and downward to the room", () => {
+  assert.equal(panelExpansionAfterSwipe(false, -PANEL_SWIPE_THRESHOLD), true);
+  assert.equal(panelExpansionAfterSwipe(true, PANEL_SWIPE_THRESHOLD), false);
+  assert.equal(panelExpansionAfterSwipe(false, -PANEL_SWIPE_THRESHOLD + 1), false);
+  assert.equal(panelExpansionAfterSwipe(true, PANEL_SWIPE_THRESHOLD - 1), true);
 });
