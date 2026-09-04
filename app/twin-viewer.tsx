@@ -283,7 +283,7 @@ function PlacedFurnitureModel({
         </mesh>
       )}
       <group scale={[placement.mirrored ? -1 : 1, 1, 1]}>
-      {item.shape === "bed" ? <BedFurniture item={item} /> : item.shape === "table" ? <TableFurniture item={item} /> : item.shape === "chair" ? <ChairFurniture item={item} /> : <>
+      {item.shape === "bed" ? <BedFurniture item={item} /> : item.shape === "table" ? <TableFurniture item={item} /> : item.shape === "stool" ? <StoolFurniture item={item} /> : item.shape === "chair" || item.shape === "armchair" ? <ChairFurniture item={item} /> : <>
       {[-1, 1].flatMap((side) => [-1, 1].map((front) => (
         <mesh key={`${side}-${front}`} position={[side * (item.width / 2 - legInset), 0.08, bodyZ + front * (bodyDepth / 2 - 0.17)]} castShadow>
           <cylinderGeometry args={[0.035, 0.045, 0.16, 8]} />
@@ -396,6 +396,27 @@ function ChairFurniture({ item }: { item: FurnitureCatalogItem }) {
       <mesh position={[0, seatHeight + (item.height - seatHeight) / 2, item.depth / 2 - 0.045]} castShadow receiveShadow>
         <boxGeometry args={[item.width, item.height - seatHeight, 0.09]} />
         <meshStandardMaterial color={item.color} roughness={0.86} />
+      </mesh>
+    </group>
+  );
+}
+
+function StoolFurniture({ item }: { item: FurnitureCatalogItem }) {
+  const seatHeight = Math.min(0.72, item.height * 0.82);
+  const seatThickness = Math.min(0.09, item.height * 0.13);
+  return (
+    <group>
+      <mesh position={[0, seatHeight, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[Math.min(item.width, item.depth) * 0.43, Math.min(item.width, item.depth) * 0.43, seatThickness, 20]} />
+        <meshStandardMaterial color={item.color} roughness={0.78} />
+      </mesh>
+      <mesh position={[0, seatHeight / 2, 0]} castShadow>
+        <cylinderGeometry args={[0.035, 0.055, Math.max(0.08, seatHeight), 10]} />
+        <meshStandardMaterial color={item.accentColor} roughness={0.72} />
+      </mesh>
+      <mesh position={[0, 0.045, 0]} castShadow>
+        <cylinderGeometry args={[Math.min(item.width, item.depth) * 0.36, Math.min(item.width, item.depth) * 0.45, 0.06, 12]} />
+        <meshStandardMaterial color={item.accentColor} roughness={0.78} />
       </mesh>
     </group>
   );

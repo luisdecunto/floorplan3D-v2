@@ -1,4 +1,6 @@
-export type FurnitureShape = "sofa" | "chaise" | "armchair" | "bed" | "table" | "chair";
+import { EXTENDED_IKEA_CATALOG } from "./ikea-furniture-catalog.ts";
+
+export type FurnitureShape = "sofa" | "chaise" | "armchair" | "bed" | "table" | "chair" | "stool";
 export type FurnitureCategory = "Sofas" | "Beds" | "Tables" | "Chairs";
 
 export type FurnitureCatalogItem = {
@@ -34,7 +36,7 @@ export type FurniturePlacement = {
  * licensing path is being established. A licensed GLB can later replace each
  * procedural renderer without changing placement or project data.
  */
-export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
+const CORE_FURNITURE_CATALOG: FurnitureCatalogItem[] = [
   {
     id: "ikea-friheten-39216754",
     name: "FRIHETEN corner sofa-bed",
@@ -207,6 +209,11 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     color: "#ae745d",
     accentColor: "#8c5947",
   },
+];
+
+export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
+  ...CORE_FURNITURE_CATALOG,
+  ...EXTENDED_IKEA_CATALOG,
 ];
 
 export function furnitureCatalogItem(catalogId: string) {

@@ -31,6 +31,7 @@ import {
   RotateCw,
   Ruler,
   ScanLine,
+  Search,
   Share2,
   ShieldCheck,
   SlidersHorizontal,
@@ -1359,16 +1360,23 @@ function FurniturePanel({
   setSelectedFurnishingId: (id: string | null) => void;
   undoFurnitureEdit: () => void;
 }) {
+  const [catalogueQuery, setCatalogueQuery] = useState("");
+  const [catalogueCategory, setCatalogueCategory] = useState<FurnitureCatalogItem["category"] | "All">("All");
   const levelFurniture = furnishings.filter((placement) => placement.levelId === activeLevel.id);
   const selectedPlacement = furnishings.find((placement) => placement.id === selectedFurnishingId);
   const selectedItem = selectedPlacement ? furnitureCatalogItem(selectedPlacement.catalogId) : undefined;
+  const visibleCatalogue = FURNITURE_CATALOG.filter((item) => {
+    const query = catalogueQuery.trim().toLowerCase();
+    const matchesQuery = !query || `${item.name} ${item.collection} ${item.upholstery}`.toLowerCase().includes(query);
+    return matchesQuery && (catalogueCategory === "All" || item.category === catalogueCategory);
+  });
   return (
     <div className="furniture-panel">
       <div className="panel-heading furniture-heading">
         <div><span className="panel-kicker">Furniture library</span><h2>Place to scale</h2></div>
         <span className="furniture-count">{levelFurniture.length} placed</span>
       </div>
-      <p className="panel-intro">IKEA starters use verified metric footprints and lightweight procedural previews. Open the product link to compare the current IKEA listing.</p>
+      <p className="panel-intro">IKEA references use metric footprints and lightweight procedural previews. Linked starters can be compared with the current IKEA listing.</p>
       <div className="furniture-edit-toolbar">
         <label className="grid-snap-toggle panel-grid-toggle">
           <input
@@ -1412,11 +1420,20 @@ function FurniturePanel({
         </div>
       )}
 
+      <div className="catalogue-tools">
+        <label className="catalogue-search"><Search size={14} /><span className="sr-only">Search furniture</span><input value={catalogueQuery} onChange={(event) => setCatalogueQuery(event.target.value)} placeholder="Search IKEA furniture" /></label>
+        <div className="catalogue-filters" aria-label="Furniture category">
+          {(["All", "Sofas", "Beds", "Tables", "Chairs"] as const).map((category) => (
+            <button key={category} className={catalogueCategory === category ? "active" : ""} onClick={() => setCatalogueCategory(category)}>{category}</button>
+          ))}
+        </div>
+      </div>
+
       <div className="catalogue-list">
         {(["Sofas", "Beds", "Tables", "Chairs"] as const).map((category) => (
-          <section className="catalogue-group" key={category}>
+          visibleCatalogue.some((item) => item.category === category) && <section className="catalogue-group" key={category}>
             <h3>{category}</h3>
-            {FURNITURE_CATALOG.filter((item) => item.category === category).map((item) => (
+            {visibleCatalogue.filter((item) => item.category === category).map((item) => (
               <article className="catalogue-card" key={item.id}>
                 <span className="catalogue-icon" style={{ background: item.color }}><FurnitureItemIcon shape={item.shape} size={22} /></span>
                 <span className="catalogue-copy">
@@ -1431,6 +1448,7 @@ function FurniturePanel({
             ))}
           </section>
         ))}
+        {visibleCatalogue.length === 0 && <p className="catalogue-empty">No furniture matches “{catalogueQuery}”.</p>}
       </div>
 
       <div className="catalogue-note"><ShieldCheck size={15} /><span>Drag freely through rooms. Overlaps turn red and snap back unless released on a clear area. Keyboard: arrows move, Q/E rotate, M mirrors, Delete removes.</span></div>
@@ -1441,7 +1459,7 @@ function FurniturePanel({
 function FurnitureItemIcon({ shape, size }: { shape: FurnitureCatalogItem["shape"]; size: number }) {
   if (shape === "bed") return <BedDouble size={size} />;
   if (shape === "table") return <Table2 size={size} />;
-  if (shape === "chair" || shape === "armchair") return <Armchair size={size} />;
+  if (shape === "chair" || shape === "armchair" || shape === "stool") return <Armchair size={size} />;
   return <Sofa size={size} />;
 }
 

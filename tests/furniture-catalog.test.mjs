@@ -14,12 +14,22 @@ import {
 
 test("starter furniture has unique IDs and positive real-world dimensions", () => {
   assert.equal(new Set(FURNITURE_CATALOG.map(({ id }) => id)).size, FURNITURE_CATALOG.length);
-  assert.ok(FURNITURE_CATALOG.length >= 5);
+  assert.ok(FURNITURE_CATALOG.length >= 35);
   for (const item of FURNITURE_CATALOG) {
     assert.ok(item.width > 0.25);
     assert.ok(item.depth > 0.25);
     assert.ok(item.height > 0.25);
   }
+});
+
+test("expanded IKEA catalogue covers the requested furniture families", () => {
+  const ikeaItems = FURNITURE_CATALOG.filter(({ collection }) => collection === "IKEA");
+  assert.ok(ikeaItems.length >= 30);
+  for (const category of ["Sofas", "Beds", "Tables", "Chairs"]) {
+    assert.ok(ikeaItems.some((item) => item.category === category), `missing ${category}`);
+  }
+  assert.ok(ikeaItems.some((item) => item.name.includes("coffee table")));
+  assert.ok(ikeaItems.some((item) => item.shape === "stool"));
 });
 
 test("IKEA starter set includes verified furniture categories and FRIHETEN dimensions", () => {
