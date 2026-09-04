@@ -31,6 +31,12 @@
 .ws-view-switch { display: flex; padding: 3px; background: #e8ece4; border-radius: 12px; }
 .ws-view-switch button { min-height: 44px; padding: 8px 11px; background: transparent; border: 0; }
 .ws-view-switch button[aria-pressed=true] { background: #fffefa; box-shadow: 0 1px 4px #21372b14; }
+.ws-view-controls { display: flex; align-items: center; gap: 12px; padding: 0 max(12px, env(safe-area-inset-left)) 4px; background: #f6f5ef; flex-shrink: 0; }
+.ws-view-controls .ws-house-toggle { flex-shrink: 0; padding: 8px 10px; }
+.ws-house-toggle[aria-pressed=true] { background: #e3eee3; color: #215343; border-color: #a5c3ad; }
+.ws-app .ws-wall-slider { flex: 1; max-width: 320px; min-width: 0; margin: 0 0 0 auto; flex-direction: row; align-items: center; gap: 8px; font-weight: 500; }
+.ws-app .ws-wall-slider input { flex: 1; width: 100%; min-width: 0; min-height: 44px; padding: 0; border: 0; background: transparent; accent-color: var(--ws-accent); cursor: pointer; touch-action: pan-y; }
+.ws-wall-value { width: 4ch; flex-shrink: 0; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; color: #64736a; }
 .ws-workarea { min-height: 0; flex: 1; display: flex; flex-direction: column; position: relative; }
 .ws-stage { min-height: 100px; min-width: 0; position: relative; flex: 1; overflow: hidden; }
 .ws-viewer, .ws-plan-stage { position: absolute; inset: 0; }
@@ -123,6 +129,8 @@
 @media (min-width: 900px) {
   .ws-header { padding: 10px 24px; }
   .ws-toolbar { padding: 8px 24px; }
+  .ws-view-controls { padding-left: 24px; padding-right: 24px; }
+  .ws-app .ws-wall-slider { margin-left: 12px; }
   .ws-workarea { flex-direction: row; }
   .ws-app.has-panel .ws-panels { width: 370px; border-left: 1px solid var(--ws-border); }
   .ws-panel, .ws-panel.expanded { height: 100%; max-height: none; border: 0; border-radius: 0; box-shadow: none; padding-top: 10px; }
@@ -151,6 +159,9 @@
   .ws-panel { max-height: calc(100dvh - 240px); }
 }
 @media (max-width: 360px) {
+  .ws-view-controls { gap: 8px; }
+  .ws-view-controls .ws-house-toggle { padding-left: 8px; padding-right: 8px; }
+  .ws-house-toggle svg { display: none; }
   .ws-bottom button { font-size: 12px; gap: 4px; }
   .ws-bottom button:last-child span { display: none; }
   .ws-view-switch button { padding-left: 8px; padding-right: 8px; }

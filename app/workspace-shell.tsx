@@ -1,10 +1,12 @@
-import { Plus, ScanLine, Undo2, MoreHorizontal, Maximize2, Box, Map, Ruler } from "lucide-react";
+import { Plus, ScanLine, Undo2, MoreHorizontal, Maximize2, Box, Map, Ruler, House } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Level } from "./scene-data";
 
-export function WorkspaceShell({ name, saveStatus, levels, activeLevel, onFloor, view, onView, onFit, onMenu, onAdd, onReview, onUndo, canUndo, needsScale, reviewing, panelOpen, children, panels, context, notice, clearNotice }: {
+export function WorkspaceShell({ name, saveStatus, levels, activeLevel, onFloor, view, onView, wholeBuilding, onWholeBuilding, wallCutaway, onWallCutaway, onFit, onMenu, onAdd, onReview, onUndo, canUndo, needsScale, reviewing, panelOpen, children, panels, context, notice, clearNotice }: {
   name: string; saveStatus: string; levels: Level[]; activeLevel: string; onFloor: (id: string) => void;
   view: "perspective" | "top"; onView: (view: "perspective" | "top") => void;
+  wholeBuilding: boolean; onWholeBuilding: (show: boolean) => void;
+  wallCutaway: number; onWallCutaway: (height: number) => void;
   onFit: () => void; onMenu: () => void; onAdd: () => void; onReview: () => void; onUndo: () => void;
   canUndo: boolean; needsScale: boolean; reviewing: boolean; panelOpen: boolean;
   children: ReactNode; panels: ReactNode; context: ReactNode; notice: string; clearNotice: () => void;
@@ -16,6 +18,13 @@ export function WorkspaceShell({ name, saveStatus, levels, activeLevel, onFloor,
       {!reviewing && <div className="ws-view-switch" role="group" aria-label="Camera view"><button onClick={() => onView("perspective")} aria-pressed={view === "perspective"}><Box size={16} />3D</button><button onClick={() => onView("top")} aria-pressed={view === "top"}><Map size={16} />Top</button></div>}
       {reviewing ? <button onClick={onReview} className="ws-return">Back to 3D</button> : <button className="ws-icon" onClick={onFit} aria-label="Fit apartment in view"><Maximize2 size={18} /></button>}
     </div>
+    {!reviewing && <div className="ws-view-controls" role="group" aria-label="House display">
+      <button className="ws-house-toggle" aria-pressed={wholeBuilding} onClick={() => onWholeBuilding(!wholeBuilding)} title="Show all floors together"><House size={16} />Whole house</button>
+      <label className="ws-wall-slider" htmlFor="ws-wall-height"><span>Walls</span>
+        <input id="ws-wall-height" aria-label="Wall height" type="range" min={15} max={100} step={1} value={Math.round(wallCutaway * 100)} aria-valuetext={`${Math.round(wallCutaway * 100)}% of full wall height`} onChange={(event) => onWallCutaway(Number(event.target.value) / 100)} />
+        <span className="ws-wall-value" aria-hidden="true">{Math.round(wallCutaway * 100)}%</span>
+      </label>
+    </div>}
     <div className="ws-workarea"><div className="ws-stage">
       {children}
       {needsScale && !reviewing && <button className="ws-scale-reminder" onClick={onReview}><Ruler size={15} />Check scale</button>}

@@ -110,6 +110,12 @@ export default function Home() {
   function changeFloor(id: string) {
     if (draft) setNotice("Preview cancelled when changing floor.");
     setDraft(null); setSelectedId(null); setSelectedWall(null); setActiveLevel(id); setFocusedLevel(id);
+    setWholeBuilding(false); setExploded(false);
+  }
+  function changeWholeBuilding(show: boolean) {
+    if (draft) setNotice("Preview cancelled when changing house view.");
+    setDraft(null); setSelectedId(null); setWholeBuilding(show);
+    if (!show) setExploded(false);
   }
   function undo() {
     if (draft) { setDraft(null); setNotice("Preview cancelled. No saved furniture was changed."); return; }
@@ -158,7 +164,7 @@ export default function Home() {
     } else setSelectedId(null);
   }
   function toggleReview() { setDraft(null); setSelectedId(null); setPanel(reviewing ? null : "plan"); if (!reviewing) setFocusedLevel(activeLevel); }
-  function openCatalogue() { setDraft(null); setSelectedId(null); setPanel("catalogue"); setWholeBuilding(false); setExploded(false); }
+  function openCatalogue() { setDraft(null); setSelectedId(null); setPanel("catalogue"); }
   function exportProject() { if (project) { downloadProject(project); setNotice("Project file exported. Send this file to share your apartment."); } }
 
   useEffect(() => {
@@ -192,6 +198,7 @@ export default function Home() {
     <div className="ws-start-secondary"><button onClick={() => projectInput.current?.click()}><FolderOpen size={18} />Import project</button><button onClick={sample}>Try sample <ArrowRight size={18} /></button></div>
     {notice && <p className="ws-start-error" role="alert">{notice}</p>}<p className="ws-privacy">No account. No upload server. Saved on this device.<br />PNG, JPEG or WebP · up to 20 MB</p></div></main>;
   return <>{inputs}<WorkspaceShell name={project?.name ?? "Sample apartment"} saveStatus={saveStatus} levels={levels} activeLevel={activeLevel} onFloor={changeFloor} view={view} onView={setView} onFit={() => setFitRequest((value) => value + 1)}
+    wholeBuilding={wholeBuilding} onWholeBuilding={changeWholeBuilding} wallCutaway={wallCutaway} onWallCutaway={setWallCutaway}
     onMenu={() => { setDraft(null); setSelectedId(null); setPanel(panel === "project" ? null : "project"); }} onAdd={openCatalogue} onReview={toggleReview} onUndo={undo} canUndo={Boolean(history.past.length || draft)}
     needsScale={Boolean(project && project.scale.source !== "user")} reviewing={reviewing} panelOpen={Boolean(panel || editing)} notice={notice} clearNotice={() => setNotice("")}
     panels={<>
@@ -202,9 +209,7 @@ export default function Home() {
         <details><summary>Furniture on this floor ({furnishings.filter((item) => item.levelId === activeLevel).length})</summary>
           <div className="ws-menu-actions">{furnishings.filter((item) => item.levelId === activeLevel).map((item) => <button key={item.id} onClick={() => { setWholeBuilding(false); setExploded(false); setSelectedId(item.id); setPanel(null); }}>Edit {furnitureCatalogItem(item.catalogId)?.name ?? item.catalogId}</button>)}</div>
         </details>
-        <label className="ws-check"><input type="checkbox" checked={wholeBuilding} onChange={(event) => { setWholeBuilding(event.target.checked); setFitRequest((value) => value + 1); }} />Show whole building</label>
         <label className="ws-check"><input type="checkbox" disabled={!wholeBuilding} checked={exploded} onChange={(event) => setExploded(event.target.checked)} />Separate floors</label>
-        <label>Wall height<select value={wallCutaway} onChange={(event) => setWallCutaway(Number(event.target.value))}><option value={0.32}>Cutaway</option><option value={0.65}>Medium</option><option value={1}>Full height</option></select></label>
         <label className="ws-check"><input type="checkbox" checked={gridSnap} onChange={(event) => setGridSnap(event.target.checked)} />Snap to 10 cm grid</label>
         <label className="ws-check"><input type="checkbox" checked={showGrid} onChange={(event) => setShowGrid(event.target.checked)} />Show guide grid (50 cm)</label>
         <label className="ws-check"><input type="checkbox" checked={showLegend} onChange={(event) => setShowLegend(event.target.checked)} />Show model legend</label>

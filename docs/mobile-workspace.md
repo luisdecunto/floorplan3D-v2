@@ -8,6 +8,13 @@ existing GitHub Pages workflow; there is no new backend or hosting service.
 
 - Open an apartment directly into one persistent 3D workspace. Use the floor
   picker and 3D/Top control; editing is no longer a separate screen.
+- Whole house, directly above the canvas, shows all floors together. Tap again
+  or choose a floor to return to editing one floor. Browsing the catalogue keeps
+  the house view; choosing a piece focuses its active floor for safe placement.
+- The Walls slider continuously clips walls from 15% to 100% of their full
+  height. It works in single-floor and whole-house views, does not change saved
+  dimensions or undo history, and keeps the camera angle. Separate floors is
+  still available in Project while Whole house is enabled.
 - Add furniture opens a bottom sheet on phones or a docked panel on desktop.
   Search, category and scroll are retained while previewing an item.
 - Choosing a product creates an unsaved preview. Tap the floor or drag the

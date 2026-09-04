@@ -43,6 +43,9 @@ test("GitHub Pages bundle includes wall-safe furniture editing controls", async 
   assert.match(javascript, /Ready to place/);
   assert.match(javascript, /PREVIEW · NOT SAVED/);
   assert.match(javascript, /Saved on this device/);
+  assert.match(javascript, /Whole house/);
+  assert.match(javascript, /ws-wall-height/);
+  assert.match(javascript, /% of full wall height/);
   assert.doesNotMatch(javascript, /fetch\("\/api\/share/);
   assert.match(javascript, /Mirror furniture/);
   assert.match(javascript, /Delete furniture/);
