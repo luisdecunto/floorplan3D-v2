@@ -64,6 +64,10 @@
 .ws-bottom button[aria-pressed=true] { background: #eaf1e9; color: #23675c; }
 .ws-app .ws-search { position: relative; margin: 0 0 10px; display: flex; flex-direction: row; align-items: center; gap: 8px; border: 1px solid var(--ws-border); padding: 0 10px; border-radius: 10px; }
 .ws-app .ws-search input { border: 0; padding-left: 0; background: transparent; }
+.ws-library-tools { display: flex; align-items: flex-start; gap: 8px; }
+.ws-library-tools .ws-search { flex: 1; min-width: 0; }
+.ws-library-tools .ws-search svg { flex-shrink: 0; }
+.ws-library-tools select { flex: 0 0 108px; font-size: 14px; }
 .ws-categories { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
 .ws-categories button { border-radius: 20px; flex-shrink: 0; min-height: 44px; padding: 8px 15px; font-weight: 500; }
 .ws-categories button[aria-pressed=true] { background: #e3eee3; color: #215343; border-color: #c1d6c6; }

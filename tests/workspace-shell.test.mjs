@@ -9,7 +9,7 @@ import react from "@vitejs/plugin-react";
 const server = await createServer({
   root: fileURLToPath(new URL("../", import.meta.url)), configFile: false,
   plugins: [react()], optimizeDeps: { noDiscovery: true, include: [] },
-  server: { middlewareMode: true, watch: null }, appType: "custom",
+  server: { middlewareMode: true, watch: null, ws: false }, appType: "custom",
 });
 after(() => server.close());
 const { WorkspaceShell } = await server.ssrLoadModule("/app/workspace-shell.tsx");

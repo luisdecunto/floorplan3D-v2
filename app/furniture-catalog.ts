@@ -1,7 +1,9 @@
 import { EXTENDED_IKEA_CATALOG } from "./ikea-furniture-catalog.ts";
+import { RETAIL_FURNITURE_CATALOG } from "./retail-furniture-catalog.ts";
 
-export type FurnitureShape = "sofa" | "chaise" | "armchair" | "bed" | "table" | "chair" | "stool";
-export type FurnitureCategory = "Sofas" | "Beds" | "Tables" | "Chairs";
+export type FurnitureShape = "sofa" | "chaise" | "armchair" | "bed" | "table" | "chair" | "stool" | "wardrobe" | "cabinet";
+export const FURNITURE_CATEGORIES = ["Wardrobes", "Cupboards", "Coffee tables", "Sofas", "Beds", "Tables", "Chairs"] as const;
+export type FurnitureCategory = typeof FURNITURE_CATEGORIES[number];
 
 export type FurnitureCatalogItem = {
   id: string;
@@ -18,6 +20,25 @@ export type FurnitureCatalogItem = {
   accentColor: string;
   articleNumber?: string;
   sourceUrl?: string;
+  brand?: "IKEA" | "JYSK";
+  materials?: string[];
+  sourceCheckedAt?: string;
+  modelProvenance?: "original-procedural";
+  storage?: {
+    doors: number;
+    drawers?: number;
+    mirrorDoor?: number;
+    base?: "legs" | "plinth";
+    baseHeight?: number;
+    front?: "plain" | "panel" | "rattan";
+  };
+  table?: {
+    top: "rectangle" | "round";
+    shelf?: "solid" | "slatted";
+    support?: "legs" | "panels";
+    legs?: 3 | 4;
+    legStyle?: "round" | "square";
+  };
 };
 
 export type FurniturePlacement = {
@@ -102,7 +123,7 @@ const CORE_FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     id: "ikea-lack-table-40104294",
     name: "LACK coffee table",
     collection: "IKEA · 401.042.94",
-    category: "Tables",
+    category: "Coffee tables",
     shape: "table",
     width: 0.9,
     depth: 0.55,
@@ -214,7 +235,21 @@ const CORE_FURNITURE_CATALOG: FurnitureCatalogItem[] = [
 export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
   ...CORE_FURNITURE_CATALOG,
   ...EXTENDED_IKEA_CATALOG,
+  ...RETAIL_FURNITURE_CATALOG,
 ];
+
+export function furnitureBrand(item: FurnitureCatalogItem) {
+  return item.brand ?? (item.collection.startsWith("IKEA") ? "IKEA" : "Originals");
+}
+
+export function filterFurnitureCatalog(query: string, category = "All", brand = "All") {
+  const words = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+  return FURNITURE_CATALOG.filter((item) => {
+    const text = `${item.name} ${item.collection} ${item.category} ${item.upholstery} ${item.articleNumber ?? ""}`.toLocaleLowerCase();
+    return (category === "All" || item.category === category || (category === "Tables" && item.category === "Coffee tables"))
+      && (brand === "All" || furnitureBrand(item) === brand) && words.every((word) => text.includes(word));
+  });
+}
 
 export function furnitureCatalogItem(catalogId: string) {
   return FURNITURE_CATALOG.find((item) => item.id === catalogId);

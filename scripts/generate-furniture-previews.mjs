@@ -8,7 +8,7 @@ import { BoxGeometry, CylinderGeometry, Matrix4, Vector3, Euler, Quaternion, Col
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const output = new URL("../public/furniture-previews/", import.meta.url);
-const server = await createServer({ root, configFile: false, plugins: [react()], optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, watch: null }, appType: "custom" });
+const server = await createServer({ root, configFile: false, plugins: [react()], optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, watch: null, ws: false }, appType: "custom" });
 try {
   const { FURNITURE_CATALOG } = await server.ssrLoadModule("/app/furniture-catalog.ts");
   const { ProceduralFurniture } = await server.ssrLoadModule("/app/furniture-model.tsx");

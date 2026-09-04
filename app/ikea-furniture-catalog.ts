@@ -54,9 +54,9 @@ export const EXTENDED_IKEA_CATALOG: FurnitureCatalogItem[] = [
   ikea("ikea-tonstad-120", "TONSTAD extendable dining table", "Tables", "table", 1.20, 0.70, 0.75, "#b8956f", "#765b43", "Oak veneer"),
   ikea("ikea-ekedalen-120", "EKEDALEN dining table", "Tables", "table", 1.20, 0.80, 0.75, "#b49470", "#74563d", "Extendable oak veneer"),
   ikea("ikea-melltorp-75", "MELLTORP table", "Tables", "table", 0.75, 0.75, 0.74, "#eeeae1", "#77736d", "White laminate · steel"),
-  ikea("ikea-vittsjo-coffee", "VITTSJÖ coffee table", "Tables", "table", 1.00, 0.50, 0.50, "#302b26", "#171514", "Black-brown and glass"),
-  ikea("ikea-hemnes-coffee", "HEMNES coffee table", "Tables", "table", 0.90, 0.46, 0.46, "#b9a38a", "#806b57", "Solid pine"),
-  ikea("ikea-hol-coffee", "HOL coffee table", "Tables", "table", 0.90, 0.50, 0.45, "#bd986c", "#88623e", "Solid acacia"),
+  ikea("ikea-vittsjo-coffee", "VITTSJÖ coffee table", "Coffee tables", "table", 1.00, 0.50, 0.50, "#302b26", "#171514", "Black-brown and glass"),
+  ikea("ikea-hemnes-coffee", "HEMNES coffee table", "Coffee tables", "table", 0.90, 0.46, 0.46, "#b9a38a", "#806b57", "Solid pine"),
+  ikea("ikea-hol-coffee", "HOL coffee table", "Coffee tables", "table", 0.90, 0.50, 0.45, "#bd986c", "#88623e", "Solid acacia"),
   ikea("ikea-gladom", "GLADOM tray table", "Tables", "table", 0.45, 0.53, 0.47, "#5b6f68", "#3e4c48", "Powder-coated steel"),
   ikea("ikea-burvik", "BURVIK side table", "Tables", "table", 0.38, 0.38, 0.45, "#bd8d5e", "#805a3a", "Powder-coated steel and wood"),
 

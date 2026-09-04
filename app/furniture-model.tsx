@@ -1,6 +1,9 @@
 /* eslint-disable react/no-unknown-property */
 import type { FurnitureCatalogItem } from "./furniture-catalog";
+import { StorageFurniture, RetailTableFurniture } from "./furniture-retail-model";
 export function ProceduralFurniture({item}: {item: FurnitureCatalogItem}) {
+  if (item.shape === "wardrobe" || item.shape === "cabinet") return <StorageFurniture item={item} />;
+  if (item.shape === "table" && item.table) return <RetailTableFurniture item={item} />;
   const bodyDepth = item.bodyDepth ?? item.depth;
   const bodyZ = item.shape === "chaise" ? (item.depth - bodyDepth) / 2 : 0;
   const armWidth = Math.min(0.24, item.width * 0.14);

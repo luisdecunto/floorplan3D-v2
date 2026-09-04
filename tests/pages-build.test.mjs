@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { access, readFile, readdir } from "node:fs/promises";
 import test from "node:test";
+import { FURNITURE_CATALOG } from "../app/furniture-catalog.ts";
 
 const outputDirectory = new URL("../pages-dist/", import.meta.url);
 const expectedBasePath = process.env.PAGES_BASE_PATH ?? "/floorplan3D/";
@@ -53,11 +54,15 @@ test("GitHub Pages bundle includes wall-safe furniture editing controls", async 
   assert.match(javascript, /MALM high bed frame/);
   assert.match(javascript, /LISABO dining table/);
   assert.match(javascript, /TEODORES chair/);
+  assert.match(javascript, /BILLUND wardrobe with drawers/);
+  assert.match(javascript, /SALTVIG rattan-door cupboard/);
+  assert.match(javascript, /JYSK/);
+  assert.match(javascript, /Furniture brand/);
 });
 
 test("all furniture previews are static local SVGs and test harness is not deployed", async () => {
   const previews = await readdir(new URL("furniture-previews/", outputDirectory));
-  assert.equal(previews.filter((file) => file.endsWith(".svg")).length, 47);
+  assert.deepEqual(previews.filter((file) => file.endsWith(".svg")).sort(), FURNITURE_CATALOG.map((item) => `${item.id}.svg`).sort());
   assert.ok(!(await readdir(outputDirectory)).includes("qa.html"));
   for (const file of previews) {
     const svg = await readFile(new URL("furniture-previews/" + file, outputDirectory), "utf8");
