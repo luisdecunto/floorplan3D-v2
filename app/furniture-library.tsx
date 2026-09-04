@@ -23,6 +23,7 @@ export function FurnitureLibrary({ onChoose }: { onChoose: (item: FurnitureCatal
       </button>
       <details><summary>Details</summary><p>{item.upholstery}</p>{item.materials && <p>{item.materials.join(" · ")}</p>}<p>Width × depth × height. Procedural approximation, not a manufacturer mesh.</p>
         {item.storage && <p>Closed-door footprint. Leave room to open doors and follow the retailer’s anchoring instructions.</p>}
+        {item.shelving && <p>Use the retailer’s wall-anchoring instructions. Shelves and fittings are shown as a simplified closed-footprint approximation.</p>}
         {item.table?.top === "round" && <p>Placement uses a conservative square clearance footprint.</p>}
         {item.sourceCheckedAt && <p>Dimensions checked {item.sourceCheckedAt}.</p>}
         {item.sourceUrl && <a href={item.sourceUrl} target="_blank" rel="noreferrer">View at {furnitureBrand(item)} ↗</a>}</details>

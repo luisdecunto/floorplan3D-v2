@@ -7,6 +7,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Box3, BoxGeometry, CylinderGeometry, Matrix4, Vector3, Euler, Quaternion } from "three";
 import { RETAIL_FURNITURE_CATALOG } from "../app/retail-furniture-catalog.ts";
+import { BOOKSHELF_CATALOG } from "../app/bookshelf-catalog.ts";
 
 const server = await createServer({ root: fileURLToPath(new URL("../", import.meta.url)), configFile: false, plugins: [react()], optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, watch: null, ws: false }, appType: "custom" });
 after(() => server.close());
@@ -51,7 +52,7 @@ function meshes(element, parent = new Matrix4()) {
 }
 
 test("all new procedural meshes match their real outer dimensions and sit on the floor", () => {
-  for (const item of RETAIL_FURNITURE_CATALOG) {
+  for (const item of [...RETAIL_FURNITURE_CATALOG, ...BOOKSHELF_CATALOG]) {
     const parts = meshes(ProceduralFurniture({ item }));
     const bounds = parts.reduce((box, part) => box.union(part.bounds), new Box3());
     const expectedMin = [-item.width / 2, 0, -item.depth / 2];
@@ -61,6 +62,22 @@ test("all new procedural meshes match their real outer dimensions and sit on the
       assert.ok(Math.abs(bounds.max[axis] - expectedMax[index]) < 1e-6, `${item.id} maximum ${axis}`);
     }
   }
+});
+
+test("bookcase variants retain their recognisable frame and shelf configurations", () => {
+  for (const item of BOOKSHELF_CATALOG) {
+    const parts = meshes(ProceduralFurniture({ item }));
+    assert.equal(parts.filter((part) => part.name === "bookcase-shelf").length, item.shelving.sections * item.shelving.shelvesPerSection, item.name);
+    if (item.shelving.system === "ivar") {
+      assert.equal(parts.filter((part) => part.name === "bookcase-upright").length, (item.shelving.sections + 1) * 2, item.name);
+      assert.equal(parts.filter((part) => part.name === "bookcase-brace").length, item.shelving.sections, item.name);
+    } else {
+      assert.equal(parts.filter((part) => part.name === "bookcase-side").length, 2, item.name);
+      assert.equal(parts.filter((part) => part.name === "bookcase-back").length, 1, item.name);
+    }
+  }
+  assert.equal(meshes(ProceduralFurniture({ item: BOOKSHELF_CATALOG.find((item) => item.shelving.storageBox) })).filter((part) => part.name === "bookcase-storage-box").length, 1);
+  assert.equal(meshes(ProceduralFurniture({ item: BOOKSHELF_CATALOG.find((item) => item.shelving.lowerCabinets) })).filter((part) => part.name === "bookcase-cabinet-door").length, 4);
 });
 
 test("storage has the specified closed doors, drawers and mirror on its front face", () => {

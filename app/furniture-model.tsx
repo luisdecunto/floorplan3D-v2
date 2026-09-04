@@ -1,7 +1,8 @@
 /* eslint-disable react/no-unknown-property */
 import type { FurnitureCatalogItem } from "./furniture-catalog";
-import { StorageFurniture, RetailTableFurniture } from "./furniture-retail-model";
+import { BookcaseFurniture, StorageFurniture, RetailTableFurniture } from "./furniture-retail-model";
 export function ProceduralFurniture({item}: {item: FurnitureCatalogItem}) {
+  if (item.shape === "bookcase") return <BookcaseFurniture item={item} />;
   if (item.shape === "wardrobe" || item.shape === "cabinet") return <StorageFurniture item={item} />;
   if (item.shape === "table" && item.table) return <RetailTableFurniture item={item} />;
   const bodyDepth = item.bodyDepth ?? item.depth;

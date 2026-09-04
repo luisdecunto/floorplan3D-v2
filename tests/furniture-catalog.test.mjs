@@ -15,6 +15,7 @@ import {
   validFurniturePosition,
 } from "../app/furniture-placement.ts";
 import { RETAIL_FURNITURE_CATALOG } from "../app/retail-furniture-catalog.ts";
+import { BOOKSHELF_CATALOG } from "../app/bookshelf-catalog.ts";
 
 test("starter furniture has unique IDs and positive real-world dimensions", () => {
   assert.equal(new Set(FURNITURE_CATALOG.map(({ id }) => id)).size, FURNITURE_CATALOG.length);
@@ -24,6 +25,26 @@ test("starter furniture has unique IDs and positive real-world dimensions", () =
     assert.ok(item.depth > 0.25);
     assert.ok(item.height > 0.25);
   }
+});
+
+test("bookcase references retain the six checked BILLY and IVAR configurations", () => {
+  const expected = {
+    "002.638.50": [0.80, 0.28, 2.02], "502.638.38": [0.40, 0.28, 2.02],
+    "894.045.78": [0.89, 0.30, 1.79], "394.070.70": [0.89, 0.50, 1.79],
+    "594.038.15": [0.89, 0.30, 1.79], "394.039.39": [1.74, 0.30, 1.79],
+  };
+  assert.equal(BOOKSHELF_CATALOG.length, 6);
+  assert.equal(FURNITURE_CATALOG.length, 67);
+  for (const item of BOOKSHELF_CATALOG) {
+    assert.deepEqual([item.width, item.depth, item.height], expected[item.articleNumber], item.name);
+    assert.equal(item.category, "Bookcases");
+    assert.equal(item.shape, "bookcase");
+    assert.equal(item.brand, "IKEA");
+    assert.ok(item.shelving.shelvesPerSection >= 3);
+    assert.match(item.sourceUrl, /^https:\/\/www\.ikea\.com\/dk\/da\/p\//);
+  }
+  assert.equal(filterFurnitureCatalog("IVAR", "Bookcases", "IKEA").length, 4);
+  assert.equal(filterFurnitureCatalog("BILLY", "Bookcases", "IKEA").length, 2);
 });
 
 test("expanded IKEA catalogue covers the requested furniture families", () => {
@@ -61,7 +82,7 @@ test("new retailer references retain checked assembled dimensions, materials and
     "3681141": [1.10, 0.60, 0.53], "3650037": [1.10, 0.60, 0.45],
   };
   assert.equal(RETAIL_FURNITURE_CATALOG.length, 14);
-  assert.equal(FURNITURE_CATALOG.length, 61);
+  assert.equal(FURNITURE_CATALOG.length, 67);
   for (const item of RETAIL_FURNITURE_CATALOG) {
     assert.deepEqual([item.width, item.depth, item.height], expected[item.articleNumber], item.name);
     assert.ok(item.materials.length > 0);
@@ -91,9 +112,9 @@ test("brand and category filters expose storage and both new and legacy coffee t
   assert.ok(filterFurnitureCatalog("", "Tables").some((item) => item.id === "jysk-lyngvig-3650037"));
 });
 
-test("new cabinets and tables retain wall and furniture collision at rotated placements", () => {
+test("new retail furniture retains wall and furniture collision at rotated placements", () => {
   const level = { slab: { x: 0, z: 0, width: 12, depth: 12 }, walls: [{ id: "divider", start: [0, -6], end: [0, 6], thickness: 0.18 }] };
-  for (const item of RETAIL_FURNITURE_CATALOG) {
+  for (const item of [...RETAIL_FURNITURE_CATALOG, ...BOOKSHELF_CATALOG]) {
     for (const rotation of [0, Math.PI / 4, Math.PI / 2]) {
       assert.equal(resolveFurnitureMove(item, level, rotation, { x: -3, z: 0 }, { x: 0, z: 0 }).collision, "wall", item.name);
       assert.equal(resolveFurnitureMove(item, level, rotation, { x: -3, z: 0 }, { x: -2, z: 0 }).collision, null, item.name);

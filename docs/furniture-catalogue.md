@@ -1,4 +1,4 @@
-# Storage and coffee-table catalogue
+# Retail furniture catalogue
 
 This expansion adds 14 products to the existing 47 (61 total). The new entries
 are in `app/retail-furniture-catalog.ts`. All original placement IDs, dimensions
@@ -56,3 +56,20 @@ tables, width and depth both equal diameter. Stock and prices are not tracked.
 rotated wall/furniture collisions, actual procedural bounds and front details,
 plus the existing placement/history and workspace controls. `npm run
 validate:pages` includes these tests and the static build.
+
+## Bookcases and IVAR configurations
+
+Six IKEA bookcases extend the catalogue to 67 pieces. BILLY is rendered as an
+enclosed case with back panel, plinth and five shelves. IVAR uses open pine
+uprights, shelves and a simplified rear cross-brace; the combination variants
+also show their lower cabinets or rolling storage box. These are original
+procedural models with the same sourcing and placement rules described above.
+
+| Product | W × D × H (m) | Reference |
+| --- | --- | --- |
+| IKEA BILLY bookcase, 80 cm | 0.80 × 0.28 × 2.02 | [002.638.50](https://www.ikea.com/dk/da/p/billy-reol-hvid-00263850/) |
+| IKEA BILLY narrow bookcase | 0.40 × 0.28 × 2.02 | [502.638.38](https://www.ikea.com/dk/da/p/billy-reol-hvid-50263838/) |
+| IKEA IVAR shelving, shallow | 0.89 × 0.30 × 1.79 | [894.045.78](https://www.ikea.com/dk/da/p/ivar-reol-fyr-s89404578/) |
+| IKEA IVAR shelving, deep | 0.89 × 0.50 × 1.79 | [394.070.70](https://www.ikea.com/dk/da/p/ivar-reol-fyr-s39407070/) |
+| IKEA IVAR with storage box | 0.89 × 0.30 × 1.79 | [594.038.15](https://www.ikea.com/dk/da/p/ivar-reol-med-opbevaringskasse-fyr-s59403815/) |
+| IKEA IVAR, 2 sections/cabinets | 1.74 × 0.30 × 1.79 | [394.039.39](https://www.ikea.com/dk/da/p/ivar-2-sektioner-hylder-skab-fyr-s39403939/) |

@@ -1,8 +1,9 @@
 import { EXTENDED_IKEA_CATALOG } from "./ikea-furniture-catalog.ts";
 import { RETAIL_FURNITURE_CATALOG } from "./retail-furniture-catalog.ts";
+import { BOOKSHELF_CATALOG } from "./bookshelf-catalog.ts";
 
-export type FurnitureShape = "sofa" | "chaise" | "armchair" | "bed" | "table" | "chair" | "stool" | "wardrobe" | "cabinet";
-export const FURNITURE_CATEGORIES = ["Wardrobes", "Cupboards", "Coffee tables", "Sofas", "Beds", "Tables", "Chairs"] as const;
+export type FurnitureShape = "sofa" | "chaise" | "armchair" | "bed" | "table" | "chair" | "stool" | "wardrobe" | "cabinet" | "bookcase";
+export const FURNITURE_CATEGORIES = ["Wardrobes", "Cupboards", "Bookcases", "Coffee tables", "Sofas", "Beds", "Tables", "Chairs"] as const;
 export type FurnitureCategory = typeof FURNITURE_CATEGORIES[number];
 
 export type FurnitureCatalogItem = {
@@ -38,6 +39,13 @@ export type FurnitureCatalogItem = {
     support?: "legs" | "panels";
     legs?: 3 | 4;
     legStyle?: "round" | "square";
+  };
+  shelving?: {
+    system: "ivar" | "billy";
+    sections: 1 | 2;
+    shelvesPerSection: number;
+    lowerCabinets?: number;
+    storageBox?: boolean;
   };
 };
 
@@ -236,6 +244,7 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
   ...CORE_FURNITURE_CATALOG,
   ...EXTENDED_IKEA_CATALOG,
   ...RETAIL_FURNITURE_CATALOG,
+  ...BOOKSHELF_CATALOG,
 ];
 
 export function furnitureBrand(item: FurnitureCatalogItem) {

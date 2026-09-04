@@ -2,8 +2,65 @@
 import type { FurnitureCatalogItem } from "./furniture-catalog";
 
 type Vector = [number, number, number];
-function Box({ size, at, color, name }: { size: Vector; at: Vector; color: string; name?: string }) {
-  return <mesh name={name} position={at} castShadow receiveShadow><boxGeometry args={size} /><meshStandardMaterial color={color} roughness={0.76} /></mesh>;
+function Box({ size, at, color, name, rotation }: { size: Vector; at: Vector; color: string; name?: string; rotation?: Vector }) {
+  return <mesh name={name} position={at} rotation={rotation} castShadow receiveShadow><boxGeometry args={size} /><meshStandardMaterial color={color} roughness={0.76} /></mesh>;
+}
+
+function IvarBookcase({ item }: { item: FurnitureCatalogItem }) {
+  const { width, depth, height, color, accentColor } = item;
+  const config = item.shelving!;
+  const post = 0.035;
+  const boundaries = Array.from({ length: config.sections + 1 }, (_, index) => -width / 2 + post / 2 + (width - post) * index / config.sections);
+  const sectionWidth = (width - post) / config.sections;
+  const shelfWidth = sectionWidth - post - 0.016;
+  const shelfDepth = depth - 0.028;
+  const shelfThickness = 0.025;
+  const cabinets = Math.min(config.sections, config.lowerCabinets ?? 0);
+  return <group>
+    {boundaries.flatMap((x, index) => [-1, 1].map((side) =>
+      <Box key={`post-${index}-${side}`} name="bookcase-upright" size={[post, height, post]} at={[x, height / 2, side * (depth / 2 - post / 2)]} color={accentColor} />,
+    ))}
+    {Array.from({ length: config.sections }, (_, section) => {
+      const center = (boundaries[section] + boundaries[section + 1]) / 2;
+      return <group key={`section-${section}`}>
+        {Array.from({ length: config.shelvesPerSection }, (_, shelf) => {
+          const rangeBottom = cabinets > section ? 0.91 : config.storageBox && section === 0 ? 0.44 : 0.075;
+          const rangeTop = height - 0.075;
+          const y = config.shelvesPerSection === 1 ? rangeTop : rangeBottom + (rangeTop - rangeBottom) * shelf / (config.shelvesPerSection - 1);
+          return <Box key={shelf} name="bookcase-shelf" size={[shelfWidth, shelfThickness, shelfDepth]} at={[center, y, 0]} color={color} />;
+        })}
+        {cabinets > section && <group>
+          <Box name="bookcase-cabinet" size={[shelfWidth, 0.82, depth - 0.045]} at={[center, 0.47, 0.008]} color={accentColor} />
+          {[-1, 1].map((side) => <Box key={side} name="bookcase-cabinet-door" size={[shelfWidth / 2 - 0.008, 0.76, 0.018]} at={[center + side * shelfWidth / 4, 0.47, -depth / 2 + 0.014]} color={color} />)}
+        </group>}
+        {config.storageBox && section === 0 && <group>
+          <Box name="bookcase-storage-box" size={[shelfWidth - 0.03, 0.32, depth - 0.05]} at={[center, 0.21, 0.008]} color={color} />
+          <Box name="bookcase-storage-box-front" size={[shelfWidth - 0.05, 0.22, 0.018]} at={[center, 0.23, -depth / 2 + 0.014]} color={accentColor} />
+        </group>}
+        <Box name="bookcase-brace" size={[Math.hypot(shelfWidth, height * 0.58), 0.009, 0.009]} at={[center, height * 0.50, depth / 2 - 0.011]} color="#8a8e86" rotation={[0, 0, Math.atan2(height * 0.58, shelfWidth)]} />
+      </group>;
+    })}
+  </group>;
+}
+
+function BillyBookcase({ item }: { item: FurnitureCatalogItem }) {
+  const { width, depth, height, color, accentColor } = item;
+  const shelves = item.shelving!.shelvesPerSection;
+  const side = 0.022;
+  const panel = 0.026;
+  const innerWidth = width - side * 2;
+  return <group>
+    {[-1, 1].map((position) => <Box key={position} name="bookcase-side" size={[side, height, depth]} at={[position * (width / 2 - side / 2), height / 2, 0]} color={color} />)}
+    <Box name="bookcase-back" size={[innerWidth, height - panel * 2, 0.009]} at={[0, height / 2, depth / 2 - 0.005]} color={accentColor} />
+    <Box name="bookcase-bottom" size={[innerWidth, panel, depth]} at={[0, panel / 2, 0]} color={color} />
+    <Box name="bookcase-top" size={[innerWidth, panel, depth]} at={[0, height - panel / 2, 0]} color={color} />
+    {Array.from({ length: shelves }, (_, index) => <Box key={index} name="bookcase-shelf" size={[innerWidth, 0.021, depth - 0.018]} at={[0, height * (index + 1) / (shelves + 1), -0.006]} color={color} />)}
+    <Box name="bookcase-plinth" size={[innerWidth, 0.075, 0.018]} at={[0, 0.065, -depth / 2 + 0.012]} color={accentColor} />
+  </group>;
+}
+
+export function BookcaseFurniture({ item }: { item: FurnitureCatalogItem }) {
+  return item.shelving?.system === "ivar" ? <IvarBookcase item={item} /> : <BillyBookcase item={item} />;
 }
 
 /** Closed fronts face local -Z and rotate/mirror with their placement.
