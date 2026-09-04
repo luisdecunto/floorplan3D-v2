@@ -20,7 +20,7 @@ test("catalogue renders retailer-correct links, new categories and a brand selec
   assert.match(html, /View at JYSK/);
   assert.match(html, /View at IKEA/);
   assert.match(html, /aria-label="Furniture brand"/);
-  for (const name of ["Wardrobes", "Cupboards", "Coffee tables"]) assert.ok(html.includes(name));
+  for (const name of ["Wardrobes", "Cupboards", "Coffee tables", "Desks"]) assert.ok(html.includes(name));
   assert.match(html, /jysk-billund-3611113\.svg/);
   assert.match(html, /href="https:\/\/jysk\.dk\/[^"]+"[^>]*>View at JYSK/);
 });
@@ -92,14 +92,25 @@ test("storage has the specified closed doors, drawers and mirror on its front fa
   }
 });
 
-test("table variants retain round tops, three/four legs, shelves and panel supports", () => {
+test("table and desk variants retain their recognisable tops, supports and storage", () => {
   for (const item of RETAIL_FURNITURE_CATALOG.filter((item) => item.table)) {
     const parts = meshes(ProceduralFurniture({ item }));
     const round = parts.find((part) => part.name === "round-tabletop");
+    const oval = parts.find((part) => part.name === "oval-tabletop");
     assert.equal(Boolean(round), item.table.top === "round");
+    assert.equal(Boolean(oval), item.table.top === "oval");
     if (round) assert.equal(round.type, "cylinderGeometry");
+    if (oval) assert.equal(oval.type, "cylinderGeometry");
+    if (item.table.heightAdjustable) {
+      assert.equal(parts.filter((part) => part.name === "desk-foot").length, 2);
+      assert.equal(parts.filter((part) => part.name === "desk-lower-leg").length, 2);
+      assert.equal(parts.filter((part) => part.name === "desk-upper-leg").length, 2);
+      assert.equal(parts.filter((part) => part.name === "desk-controller").length, 1);
+      continue;
+    }
     assert.equal(parts.filter((part) => part.name === "table-leg").length, item.table.support === "panels" ? 0 : item.table.legs ?? 4);
     assert.equal(parts.filter((part) => part.name === "table-panel").length, item.table.support === "panels" ? 2 : 0);
     assert.equal(parts.some((part) => part.name === "table-shelf" || part.name === "shelf-slat"), Boolean(item.table.shelf));
+    assert.equal(parts.filter((part) => part.name === "desk-drawer").length, item.table.drawers ?? 0);
   }
 });

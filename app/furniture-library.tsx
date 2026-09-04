@@ -18,13 +18,16 @@ export function FurnitureLibrary({ onChoose }: { onChoose: (item: FurnitureCatal
       <button onClick={() => onChoose(item)} aria-label={`Preview ${item.name}`}>
         <img src={`${import.meta.env.BASE_URL}furniture-previews/${item.id}.svg`} alt="" width={240} height={168} loading="lazy" />
         <span className="ws-product-brand">{item.collection}{item.brand && item.articleNumber ? ` · ${item.articleNumber}` : ""}</span><strong>{item.name}</strong>
-        <span className="ws-dimensions">{item.width.toFixed(2)} × {item.depth.toFixed(2)} × {item.height.toFixed(2)} m</span>
+        <span className="ws-dimensions">{item.width.toFixed(2)} × {item.depth.toFixed(2)} × {item.table?.heightAdjustable ? `${item.table.heightAdjustable.min.toFixed(2)}–${item.table.heightAdjustable.max.toFixed(2)}` : item.height.toFixed(2)} m</span>
         <span className="ws-product-action">Preview <span aria-hidden="true">＋</span></span>
       </button>
       <details><summary>Details</summary><p>{item.upholstery}</p>{item.materials && <p>{item.materials.join(" · ")}</p>}<p>Width × depth × height. Procedural approximation, not a manufacturer mesh.</p>
         {item.storage && <p>Closed-door footprint. Leave room to open doors and follow the retailer’s anchoring instructions.</p>}
         {item.shelving && <p>Use the retailer’s wall-anchoring instructions. Shelves and fittings are shown as a simplified closed-footprint approximation.</p>}
         {item.table?.top === "round" && <p>Placement uses a conservative square clearance footprint.</p>}
+        {item.table?.top === "oval" && <p>Oval top; placement uses its full rectangular clearance footprint.</p>}
+        {item.table?.extendable && <p>Shown fully extended at {item.width.toFixed(2)} m; closed length {item.table.extendable.closedWidth.toFixed(2)} m.</p>}
+        {item.table?.heightAdjustable && <p>Height adjusts from {item.table.heightAdjustable.min.toFixed(2)} to {item.table.heightAdjustable.max.toFixed(2)} m; the preview uses {item.height.toFixed(2)} m.</p>}
         {item.sourceCheckedAt && <p>Dimensions checked {item.sourceCheckedAt}.</p>}
         {item.sourceUrl && <a href={item.sourceUrl} target="_blank" rel="noreferrer">View at {furnitureBrand(item)} ↗</a>}</details>
     </article>)}</div>

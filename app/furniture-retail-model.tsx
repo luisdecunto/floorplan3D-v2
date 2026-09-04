@@ -112,7 +112,9 @@ export function StorageFurniture({ item }: { item: FurnitureCatalogItem }) {
 export function RetailTableFurniture({ item }: { item: FurnitureCatalogItem }) {
   const { width, depth, height, color, accentColor } = item;
   const config = item.table!;
+  if (config.heightAdjustable) return <AdjustableDeskFurniture item={item} />;
   const round = config.top === "round";
+  const oval = config.top === "oval";
   const top = Math.min(0.04, height * 0.1);
   const legHeight = height - top;
   const legWidth = config.legStyle === "square" ? 0.07 : 0.045;
@@ -121,8 +123,8 @@ export function RetailTableFurniture({ item }: { item: FurnitureCatalogItem }) {
     return [Math.cos(angle) * width * 0.35, Math.sin(angle) * depth * 0.35];
   }) : [-1, 1].flatMap((x) => [-1, 1].map((z) => [x * (width / 2 - 0.06), z * (depth / 2 - 0.06)]));
   return <group>
-    {round ? <mesh name="round-tabletop" position={[0, height - top / 2, 0]} castShadow receiveShadow>
-      <cylinderGeometry args={[width / 2, width / 2, top, 32]} /><meshStandardMaterial color={color} roughness={0.7} />
+    {round || oval ? <mesh name={round ? "round-tabletop" : "oval-tabletop"} position={[0, height - top / 2, 0]} scale={[width, top, depth]} castShadow receiveShadow>
+      <cylinderGeometry args={[0.5, 0.5, 1, 32]} /><meshStandardMaterial color={color} roughness={0.7} />
     </mesh> : <Box name="tabletop" size={[width, top, depth]} at={[0, height - top / 2, 0]} color={color} />}
     {config.support === "panels" ? [-1, 1].map((side) =>
       <Box key={side} name="table-panel" size={[0.035, legHeight, depth * 0.9]} at={[side * width * 0.38, legHeight / 2, 0]} color={accentColor} />,
@@ -135,5 +137,34 @@ export function RetailTableFurniture({ item }: { item: FurnitureCatalogItem }) {
     </mesh> : config.shelf === "slatted" ? Array.from({ length: 9 }, (_, index) =>
       <Box key={index} name="shelf-slat" size={[(width - 0.13) / 9 * 0.76, 0.018, depth - 0.12]} at={[-(width - 0.13) / 2 + (width - 0.13) * (index + 0.5) / 9, height * 0.36, 0]} color={accentColor} />,
     ) : <Box name="table-shelf" size={[width - 0.10, 0.025, depth - 0.10]} at={[0, height * 0.36, 0]} color={config.support === "panels" ? accentColor : color} />)}
+    {config.drawers && <group>
+      <Box name="desk-drawer-case" size={[width * 0.52, 0.14, depth * 0.72]} at={[-width * 0.19, height - top - 0.07, 0]} color={accentColor} />
+      {Array.from({ length: config.drawers }, (_, index) => {
+        const drawerWidth = width * 0.52 / config.drawers!;
+        return <Box key={index} name="desk-drawer" size={[drawerWidth - 0.01, 0.105, 0.018]} at={[-width * 0.45 + drawerWidth * (index + 0.5), height - top - 0.07, -depth / 2 + 0.012]} color={color} />;
+      })}
+    </group>}
+  </group>;
+}
+
+/** Two telescoping T-legs make an adjustable desk distinct from a dining table.
+ * The catalogue height is its seated preview height; the supported lift range is metadata. */
+function AdjustableDeskFurniture({ item }: { item: FurnitureCatalogItem }) {
+  const { width, depth, height, color, accentColor } = item;
+  const top = Math.min(0.04, height * 0.1);
+  const frameTop = height - top;
+  const xInset = width / 2 - 0.18;
+  const lowerHeight = frameTop * 0.58;
+  const upperHeight = frameTop * 0.46;
+  return <group>
+    <Box name="tabletop" size={[width, top, depth]} at={[0, height - top / 2, 0]} color={color} />
+    {[-1, 1].map((side) => <group key={side}>
+      <Box name="desk-foot" size={[0.09, 0.04, depth * 0.78]} at={[side * xInset, 0.02, 0]} color={accentColor} />
+      <Box name="desk-lower-leg" size={[0.09, lowerHeight, 0.09]} at={[side * xInset, 0.04 + lowerHeight / 2, 0]} color={accentColor} />
+      <Box name="desk-upper-leg" size={[0.065, upperHeight, 0.065]} at={[side * xInset, frameTop - upperHeight / 2, 0]} color="#4c504d" />
+    </group>)}
+    <Box name="desk-crossbar" size={[width - 0.34, 0.075, 0.09]} at={[0, frameTop - 0.055, 0]} color={accentColor} />
+    <Box name="desk-cable-tray" size={[width * 0.48, 0.035, 0.10]} at={[0, frameTop - 0.13, 0.10]} color="#4c504d" />
+    <Box name="desk-controller" size={[0.12, 0.035, 0.06]} at={[width * 0.32, frameTop - 0.025, -depth / 2 + 0.05]} color="#303331" />
   </group>;
 }

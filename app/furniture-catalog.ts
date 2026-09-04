@@ -3,7 +3,7 @@ import { RETAIL_FURNITURE_CATALOG } from "./retail-furniture-catalog.ts";
 import { BOOKSHELF_CATALOG } from "./bookshelf-catalog.ts";
 
 export type FurnitureShape = "sofa" | "chaise" | "armchair" | "bed" | "table" | "chair" | "stool" | "wardrobe" | "cabinet" | "bookcase";
-export const FURNITURE_CATEGORIES = ["Wardrobes", "Cupboards", "Bookcases", "Coffee tables", "Sofas", "Beds", "Tables", "Chairs"] as const;
+export const FURNITURE_CATEGORIES = ["Wardrobes", "Cupboards", "Bookcases", "Coffee tables", "Sofas", "Beds", "Tables", "Desks", "Chairs"] as const;
 export type FurnitureCategory = typeof FURNITURE_CATEGORIES[number];
 
 export type FurnitureCatalogItem = {
@@ -34,11 +34,21 @@ export type FurnitureCatalogItem = {
     front?: "plain" | "panel" | "rattan";
   };
   table?: {
-    top: "rectangle" | "round";
+    top: "rectangle" | "round" | "oval";
+    use?: "coffee" | "dining" | "desk";
     shelf?: "solid" | "slatted";
     support?: "legs" | "panels";
     legs?: 3 | 4;
     legStyle?: "round" | "square";
+    drawers?: number;
+    extendable?: {
+      closedWidth: number;
+      intermediateWidths?: number[];
+    };
+    heightAdjustable?: {
+      min: number;
+      max: number;
+    };
   };
   shelving?: {
     system: "ivar" | "billy";

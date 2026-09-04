@@ -48,9 +48,9 @@ export const EXTENDED_IKEA_CATALOG: FurnitureCatalogItem[] = [
   ikea("ikea-parup-3", "PÄRUP 3-seat sofa", "Sofas", "sofa", 2.18, 0.86, 0.84, "#a7a49b", "#7e7b73", "Polyester fabric cover"),
   ikea("ikea-poang-armchair", "POÄNG armchair", "Chairs", "armchair", 0.68, 0.82, 0.94, "#c19d76", "#8d6949", "Layer-glued veneer · cushion"),
 
-  ikea("ikea-micke-142", "MICKE desk", "Tables", "table", 1.42, 0.50, 0.75, "#f1f0eb", "#c9c5bd", "White finish"),
+  ikea("ikea-micke-142", "MICKE desk", "Desks", "table", 1.42, 0.50, 0.75, "#f1f0eb", "#c9c5bd", "White finish"),
   ikea("ikea-linnmon-120", "LINNMON / ADILS table", "Tables", "table", 1.20, 0.60, 0.73, "#eee9df", "#c6c0b5", "Tabletop and steel legs"),
-  ikea("ikea-lagkapten-alex-140", "LAGKAPTEN / ALEX desk", "Tables", "table", 1.40, 0.60, 0.73, "#e5e1d8", "#b9b4ac", "Tabletop with drawer unit"),
+  ikea("ikea-lagkapten-alex-140", "LAGKAPTEN / ALEX desk", "Desks", "table", 1.40, 0.60, 0.73, "#e5e1d8", "#b9b4ac", "Tabletop with drawer unit"),
   ikea("ikea-tonstad-120", "TONSTAD extendable dining table", "Tables", "table", 1.20, 0.70, 0.75, "#b8956f", "#765b43", "Oak veneer"),
   ikea("ikea-ekedalen-120", "EKEDALEN dining table", "Tables", "table", 1.20, 0.80, 0.75, "#b49470", "#74563d", "Extendable oak veneer"),
   ikea("ikea-melltorp-75", "MELLTORP table", "Tables", "table", 0.75, 0.75, 0.74, "#eeeae1", "#77736d", "White laminate · steel"),

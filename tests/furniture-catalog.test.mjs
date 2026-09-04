@@ -34,7 +34,7 @@ test("bookcase references retain the six checked BILLY and IVAR configurations",
     "594.038.15": [0.89, 0.30, 1.79], "394.039.39": [1.74, 0.30, 1.79],
   };
   assert.equal(BOOKSHELF_CATALOG.length, 6);
-  assert.equal(FURNITURE_CATALOG.length, 67);
+  assert.equal(FURNITURE_CATALOG.length, 75);
   for (const item of BOOKSHELF_CATALOG) {
     assert.deepEqual([item.width, item.depth, item.height], expected[item.articleNumber], item.name);
     assert.equal(item.category, "Bookcases");
@@ -50,7 +50,7 @@ test("bookcase references retain the six checked BILLY and IVAR configurations",
 test("expanded IKEA catalogue covers the requested furniture families", () => {
   const ikeaItems = FURNITURE_CATALOG.filter(({ collection }) => collection === "IKEA");
   assert.ok(ikeaItems.length >= 30);
-  for (const category of ["Sofas", "Beds", "Tables", "Chairs"]) {
+  for (const category of ["Sofas", "Beds", "Tables", "Desks", "Chairs"]) {
     assert.ok(ikeaItems.some((item) => item.category === category), `missing ${category}`);
   }
   assert.ok(ikeaItems.some((item) => item.name.includes("coffee table")));
@@ -80,9 +80,13 @@ test("new retailer references retain checked assembled dimensions, materials and
     "3601087": [1.67, 0.53, 1.97], "3640396": [0.71, 0.35, 0.81],
     "3601188": [0.80, 0.35, 1.15], "3640374": [0.70, 0.70, 0.41],
     "3681141": [1.10, 0.60, 0.53], "3650037": [1.10, 0.60, 0.45],
+    "3670383": [0.50, 0.50, 1.76], "3670378": [0.97, 0.50, 1.76],
+    "3670381": [1.45, 0.50, 1.76], "3620248": [2.80, 0.90, 0.75],
+    "3640237": [2.80, 1.00, 0.75], "3620177": [2.60, 0.95, 0.75],
+    "3650133": [1.60, 0.80, 0.75], "3630073": [1.40, 0.60, 0.75],
   };
-  assert.equal(RETAIL_FURNITURE_CATALOG.length, 14);
-  assert.equal(FURNITURE_CATALOG.length, 67);
+  assert.equal(RETAIL_FURNITURE_CATALOG.length, 22);
+  assert.equal(FURNITURE_CATALOG.length, 75);
   for (const item of RETAIL_FURNITURE_CATALOG) {
     assert.deepEqual([item.width, item.depth, item.height], expected[item.articleNumber], item.name);
     assert.ok(item.materials.length > 0);
@@ -91,7 +95,7 @@ test("new retailer references retain checked assembled dimensions, materials and
     const source = new URL(item.sourceUrl);
     assert.equal(source.protocol, "https:");
     assert.equal(source.hostname, item.brand === "IKEA" ? "www.ikea.com" : "jysk.dk");
-    if (item.storage) assert.ok(item.storage.doors >= 2 && item.storage.doors <= 3);
+    if (item.storage) assert.ok(item.storage.doors >= 1 && item.storage.doors <= 3);
     if (item.table?.top === "round") assert.equal(item.width, item.depth);
   }
 });
@@ -104,12 +108,25 @@ test("brand and category filters expose storage and both new and legacy coffee t
       assert.ok(matches.every((item) => furnitureBrand(item) === brand && item.category === category));
     }
   }
-  assert.equal(filterFurnitureCatalog("JYSK wardrobe", "Wardrobes").length, 2);
+  assert.equal(filterFurnitureCatalog("JYSK wardrobe", "Wardrobes").length, 5);
   assert.equal(filterFurnitureCatalog("  sneslev  ", "All", "JYSK")[0].articleNumber, "3640374");
   assert.equal(filterFurnitureCatalog("SNESLEV", "All", "IKEA").length, 0);
   assert.equal(filterFurnitureCatalog("HAVEN", "All", "Originals").length, 2);
   assert.ok(filterFurnitureCatalog("", "Coffee tables").some((item) => item.id === "ikea-lack-table-40104294"));
   assert.ok(filterFurnitureCatalog("", "Tables").some((item) => item.id === "jysk-lyngvig-3650037"));
+  assert.ok(filterFurnitureCatalog("", "Desks", "JYSK").some((item) => item.id === "jysk-svaneke-160-3650133"));
+});
+
+test("FANDRUP sizes and configurable tables retain their planning metadata", () => {
+  const fandrup = RETAIL_FURNITURE_CATALOG.filter((item) => item.name.startsWith("FANDRUP"));
+  assert.deepEqual(fandrup.map((item) => item.width), [0.50, 0.97, 1.45]);
+  assert.deepEqual(fandrup.map((item) => item.storage.doors), [1, 2, 3]);
+  const extended = RETAIL_FURNITURE_CATALOG.filter((item) => item.table?.extendable);
+  assert.equal(extended.length, 3);
+  assert.ok(extended.every((item) => item.width > item.table.extendable.closedWidth));
+  const adjustable = RETAIL_FURNITURE_CATALOG.find((item) => item.id === "jysk-svaneke-160-3650133");
+  assert.deepEqual(adjustable.table.heightAdjustable, { min: 0.70, max: 1.19 });
+  assert.equal(adjustable.category, "Desks");
 });
 
 test("new retail furniture retains wall and furniture collision at rotated placements", () => {

@@ -63,10 +63,14 @@ test("GitHub Pages bundle includes wall-safe furniture editing controls", async 
   assert.match(javascript, /LISABO dining table/);
   assert.match(javascript, /TEODORES chair/);
   assert.match(javascript, /BILLUND wardrobe with drawers/);
+  assert.match(javascript, /FANDRUP 3-door wardrobe with drawers/);
   assert.match(javascript, /SALTVIG rattan-door cupboard/);
+  assert.match(javascript, /NORDENSKOV dining table/);
+  assert.match(javascript, /SVANEKE electric sit\/stand desk/);
   assert.match(javascript, /IVAR 2 sections with cabinets/);
   assert.match(javascript, /BILLY narrow bookcase/);
   assert.match(javascript, /Bookcases/);
+  assert.match(javascript, /Desks/);
   assert.match(javascript, /JYSK/);
   assert.match(javascript, /Furniture brand/);
   assert.match(javascript, /View at/);
