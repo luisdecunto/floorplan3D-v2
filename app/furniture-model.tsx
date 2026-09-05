@@ -1,7 +1,9 @@
 /* eslint-disable react/no-unknown-property */
 import type { FurnitureCatalogItem } from "./furniture-catalog";
 import { BookcaseFurniture, StorageFurniture, RetailTableFurniture } from "./furniture-retail-model";
-export function ProceduralFurniture({item}: {item: FurnitureCatalogItem}) {
+import { DecorFurniture } from "./decor-model";
+export function ProceduralFurniture({item, ceilingHeight = 2.7}: {item: FurnitureCatalogItem; ceilingHeight?: number}) {
+  if (item.decor) return <DecorFurniture item={item} ceilingHeight={ceilingHeight} />;
   if (item.shape === "bookcase") return <BookcaseFurniture item={item} />;
   if (item.shape === "wardrobe" || item.shape === "cabinet") return <StorageFurniture item={item} />;
   if (item.shape === "table" && item.table) return <RetailTableFurniture item={item} />;

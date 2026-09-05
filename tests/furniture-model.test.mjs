@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Box3, BoxGeometry, CylinderGeometry, Matrix4, Vector3, Euler, Quaternion } from "three";
 import { RETAIL_FURNITURE_CATALOG } from "../app/retail-furniture-catalog.ts";
 import { BOOKSHELF_CATALOG } from "../app/bookshelf-catalog.ts";
+import { DECOR_CATALOG } from "../app/decor-catalog.ts";
 
 const server = await createServer({ root: fileURLToPath(new URL("../", import.meta.url)), configFile: false, cacheDir: fileURLToPath(new URL("../node_modules/.vite-furniture-model", import.meta.url)), plugins: [react()], optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, watch: null, ws: false }, appType: "custom" });
 after(() => server.close());
@@ -20,7 +21,7 @@ test("catalogue renders retailer-correct links, new categories and a brand selec
   assert.match(html, /View at JYSK/);
   assert.match(html, /View at IKEA/);
   assert.match(html, /aria-label="Furniture brand"/);
-  for (const name of ["Wardrobes", "Cupboards", "Coffee tables", "Desks"]) assert.ok(html.includes(name));
+  for (const name of ["Wardrobes", "Cupboards", "Coffee tables", "Desks", "Lighting", "Wall décor"]) assert.ok(html.includes(name));
   assert.match(html, /jysk-billund-3611113\.svg/);
   assert.match(html, /href="https:\/\/jysk\.dk\/[^"]+"[^>]*>View at JYSK/);
 });
@@ -113,4 +114,23 @@ test("table and desk variants retain their recognisable tops, supports and stora
     assert.equal(parts.some((part) => part.name === "table-shelf" || part.name === "shelf-slat"), Boolean(item.table.shelf));
     assert.equal(parts.filter((part) => part.name === "desk-drawer").length, item.table.drawers ?? 0);
   }
+});
+
+test("decor variants render at their floor, wall or ceiling mounting height", () => {
+  for (const item of DECOR_CATALOG) {
+    const parts = meshes(ProceduralFurniture({ item, ceilingHeight: 2.7 }));
+    const bounds = parts.reduce((box, part) => box.union(part.bounds), new Box3());
+    assert.ok(parts.length >= 2, item.name);
+    if (item.mount.type === "floor") {
+      assert.ok(Math.abs(bounds.min.y) < 1e-6, `${item.name} sits on floor`);
+      assert.ok(Math.abs(bounds.max.y - item.height) < 1e-6, `${item.name} reaches declared height`);
+    } else if (item.mount.type === "wall") {
+      assert.ok(Math.abs((bounds.min.y + bounds.max.y) / 2 - item.mount.elevation) < 1e-6, `${item.name} wall elevation`);
+    } else {
+      assert.ok(Math.abs(bounds.max.y - 2.7) < 1e-6, `${item.name} attaches at ceiling`);
+      assert.ok(Math.abs(bounds.min.y - (2.7 - item.mount.drop)) < 1e-6, `${item.name} uses default drop`);
+    }
+  }
+  assert.equal(meshes(ProceduralFurniture({ item: DECOR_CATALOG.find((item) => item.shape === "mirror") })).filter((part) => part.name === "mirror-glass").length, 1);
+  assert.equal(meshes(ProceduralFurniture({ item: DECOR_CATALOG.find((item) => item.shape === "picture") })).filter((part) => part.name === "picture-art").length, 1);
 });

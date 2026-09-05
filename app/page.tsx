@@ -5,7 +5,7 @@ import { Box, Upload, FolderOpen, ArrowRight, Download, Share2, Users, LogOut } 
 import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { sampleLevels } from "./scene-data";
 import { furnitureCatalogItem, type FurnitureCatalogItem, type FurniturePlacement } from "./furniture-catalog";
-import { findNearestValidFurniturePosition, type FurnitureMoveResult } from "./furniture-placement";
+import { findNearestValidFurniturePosition, findNearestWallMountedFurniturePlacement, type FurnitureMoveResult } from "./furniture-placement";
 import { createFloorplanDocumentV2, documentRegions, documentStructures, documentSceneLevels, type FloorplanDocumentV2 } from "./floorplan-document";
 import { downloadProject, parseProject } from "./project-storage";
 import { createProjectShareUrl, decodeSharedProject, sharedProjectPayload, ShareLinkTooLargeError } from "./project-share";
@@ -186,8 +186,10 @@ export default function Home() {
   function chooseFurniture(item: FurnitureCatalogItem) {
     if (!floor) return;
     const placement: FurniturePlacement = { id: "furniture-" + crypto.randomUUID(), catalogId: item.id, levelId: floor.id, x: floor.slab.x, z: floor.slab.z, rotation: 0 };
-    const position = findNearestValidFurniturePosition(item, floor, 0, placement, gridSnap ? 0.1 : 0, placementObstacles(furnishings, placement));
-    setDraft({ ...placement, ...(position ?? placement) }); setSelectedId(null); setPanel(null);
+    const obstacles = placementObstacles(furnishings, placement);
+    const mounted = findNearestWallMountedFurniturePlacement(item, floor, placement, obstacles);
+    const position = mounted?.position ?? findNearestValidFurniturePosition(item, floor, mounted?.rotation ?? 0, placement, gridSnap ? 0.1 : 0, obstacles);
+    setDraft({ ...placement, rotation: mounted?.rotation ?? 0, ...(position ?? { x: placement.x, z: placement.z }) }); setSelectedId(null); setPanel(null);
     setWholeBuilding(false); setExploded(false); setNotice("");
   }
   function changePlacement(next: FurniturePlacement) {

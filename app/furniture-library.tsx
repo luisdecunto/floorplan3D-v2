@@ -28,6 +28,9 @@ export function FurnitureLibrary({ onChoose }: { onChoose: (item: FurnitureCatal
         {item.table?.top === "oval" && <p>Oval top; placement uses its full rectangular clearance footprint.</p>}
         {item.table?.extendable && <p>Shown fully extended at {item.width.toFixed(2)} m; closed length {item.table.extendable.closedWidth.toFixed(2)} m.</p>}
         {item.table?.heightAdjustable && <p>Height adjusts from {item.table.heightAdjustable.min.toFixed(2)} to {item.table.heightAdjustable.max.toFixed(2)} m; the preview uses {item.height.toFixed(2)} m.</p>}
+        {item.mount?.type === "wall" && <p>Wall-mounted at a suggested height and initially aligned to the nearest clear wall run.</p>}
+        {item.mount?.type === "ceiling" && <p>Hangs from this floor’s modelled ceiling height; no visible ceiling slab is required.</p>}
+        {item.collision?.parts && <p>Placement uses a tight multi-part footprint instead of the outer bounding box.</p>}
         {item.sourceCheckedAt && <p>Dimensions checked {item.sourceCheckedAt}.</p>}
         {item.sourceUrl && <a href={item.sourceUrl} target="_blank" rel="noreferrer">View at {furnitureBrand(item)} ↗</a>}</details>
     </article>)}</div>

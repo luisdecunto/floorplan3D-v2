@@ -45,14 +45,14 @@ export function placementObstacles(furnishings: FurniturePlacement[], placement:
   return furnishings.flatMap((other) => {
     const item = furnitureCatalogItem(other.catalogId);
     return item && other.levelId === placement.levelId && other.id !== placement.id
-      ? [{ id: other.id, item, position: other, rotation: other.rotation }] : [];
+      ? [{ id: other.id, item, position: other, rotation: other.rotation, mirrored: other.mirrored }] : [];
   });
 }
 
 export function previewPlacement(placement: FurniturePlacement, level: Level, furnishings: FurniturePlacement[], grid: boolean): FurnitureMoveResult {
   const item = furnitureCatalogItem(placement.catalogId);
   if (!item || placement.levelId !== level.id) return { position: placement, collision: "wall" };
-  return resolveFurnitureMove(item, level, placement.rotation, placement, placement, grid ? 0.1 : 0, placementObstacles(furnishings, placement));
+  return resolveFurnitureMove(item, level, placement.rotation, placement, placement, grid ? 0.1 : 0, placementObstacles(furnishings, placement), placement.mirrored);
 }
 
 /** Confirmation validates against the *current* floor/project, never a stale preview. */

@@ -7,7 +7,7 @@ import { Group, SRGBColorSpace, TextureLoader } from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { buildStairConnections, slabPieceTextureUv, slabPieces, stairwellOpening, type SlabPiece, type StairConnection, type StairwellOpening } from "./scene-geometry";
 import { type Fixture, type Level, type Opening, type OutdoorArea, type Wall } from "./scene-data";
-import { furnitureCatalogItem, type FurniturePlacement } from "./furniture-catalog";
+import { furnitureCatalogItem, furnitureCollisionParts, furnitureVerticalBounds, type FurniturePlacement } from "./furniture-catalog";
 import type { FurnitureMoveResult } from "./furniture-placement";
 import { activateRailSpans, clampWallGapsToRails, stairwellRailSegments, type RailSegment } from "./stairwell-rails";
 import { ProceduralFurniture } from "./furniture-model";
@@ -51,7 +51,7 @@ export default function TwinViewer({
           furnishings={furnishings.filter((placement) => placement.levelId === current.id)}
           decorating={decorating} gridSnapEnabled={gridSnapEnabled} selectedFurnishingId={selectedFurnishingId}
           movePreview={movePreview} wallCutaway={wallCutaway} />)}
-        {draft && <PlacedFurnitureModel placement={draft} elevation={level.elevation} selected preview
+        {draft && <PlacedFurnitureModel placement={draft} elevation={level.elevation} ceilingHeight={level.ceilingHeight} selected preview
           movePreview={movePreview?.id === draft.id ? movePreview.result : null} collision={draftCollision} />}
         {/* Isolating a floor hides the neighbouring slab, not its connected stair. */}
         {stairConnections.map((connection) => visibleLevels.has(connection.lowerLevelId) || visibleLevels.has(connection.upperLevelId)
@@ -83,13 +83,13 @@ function LevelModel({ decorating, level, opening, access, explodeOffset, furnish
     {opening && <StairwellTrim segments={railSegments} elevation={y} />}
     {(level.outdoorAreas ?? []).map((area) => <OutdoorAreaModel key={area.id} area={area} elevation={y} />)}
     {(level.fixtures ?? []).map((fixture) => <FurnitureModel key={fixture.id} fixture={fixture} elevation={y} />)}
-    {furnishings.map((placement) => <PlacedFurnitureModel key={placement.id} placement={placement} elevation={y}
+    {furnishings.map((placement) => <PlacedFurnitureModel key={placement.id} placement={placement} elevation={y} ceilingHeight={level.ceilingHeight}
       selected={selectedFurnishingId === placement.id} movePreview={movePreview?.id === placement.id ? movePreview.result : null} />)}
     {walls.map((wall) => <WallModel key={wall.id} wall={wall} elevation={y} levelHeight={level.ceilingHeight} wallCutaway={wallCutaway} />)}
   </group>;
 }
-function PlacedFurnitureModel({ placement, elevation, selected, movePreview, preview = false, collision = null }: {
-  placement: FurniturePlacement; elevation: number; selected: boolean; movePreview: FurnitureMoveResult | null; preview?: boolean; collision?: FurnitureMoveResult["collision"];
+function PlacedFurnitureModel({ placement, elevation, ceilingHeight, selected, movePreview, preview = false, collision = null }: {
+  placement: FurniturePlacement; elevation: number; ceilingHeight: number; selected: boolean; movePreview: FurnitureMoveResult | null; preview?: boolean; collision?: FurnitureMoveResult["collision"];
 }) {
   const item = furnitureCatalogItem(placement.catalogId);
   const model = useRef<Group>(null);
@@ -105,12 +105,16 @@ function PlacedFurnitureModel({ placement, elevation, selected, movePreview, pre
   if (!item) return null;
   const position = movePreview?.position ?? placement;
   const invalid = Boolean(movePreview?.collision ?? collision);
+  const vertical = furnitureVerticalBounds(item, ceilingHeight);
+  const selectionHeight = vertical.max - vertical.min;
   return <group position={[position.x, elevation + 0.06, position.z]} rotation={[0, placement.rotation, 0]} userData={{ furnitureId: placement.id }}>
-    {selected && <mesh position={[0, item.height / 2, 0]}>
-      <boxGeometry args={[item.width + 0.08, item.height + 0.08, item.depth + 0.08]} />
+    {selected && furnitureCollisionParts(item).map((part, index) => <mesh key={index} position={[(part.x ?? 0) * (placement.mirrored ? -1 : 1), vertical.min + selectionHeight / 2, part.z ?? 0]}>
+      {part.kind === "circle"
+        ? <cylinderGeometry args={[part.radius + 0.04, part.radius + 0.04, selectionHeight + 0.08, 28]} />
+        : <boxGeometry args={[part.width + 0.08, selectionHeight + 0.08, part.depth + 0.08]} />}
       <meshBasicMaterial color={invalid ? "#d62f2f" : "#267064"} wireframe transparent opacity={0.85} depthWrite={false} />
-    </mesh>}
-    <group ref={model} scale={[placement.mirrored ? -1 : 1, 1, 1]}><ProceduralFurniture item={item} /></group>
+    </mesh>)}
+    <group ref={model} scale={[placement.mirrored ? -1 : 1, 1, 1]}><ProceduralFurniture item={item} ceilingHeight={ceilingHeight} /></group>
   </group>;
 }
 

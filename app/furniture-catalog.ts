@@ -1,10 +1,15 @@
 import { EXTENDED_IKEA_CATALOG } from "./ikea-furniture-catalog.ts";
 import { RETAIL_FURNITURE_CATALOG } from "./retail-furniture-catalog.ts";
 import { BOOKSHELF_CATALOG } from "./bookshelf-catalog.ts";
+import { DECOR_CATALOG } from "./decor-catalog.ts";
 
-export type FurnitureShape = "sofa" | "chaise" | "armchair" | "bed" | "table" | "chair" | "stool" | "wardrobe" | "cabinet" | "bookcase";
-export const FURNITURE_CATEGORIES = ["Wardrobes", "Cupboards", "Bookcases", "Coffee tables", "Sofas", "Beds", "Tables", "Desks", "Chairs"] as const;
+export type FurnitureShape = "sofa" | "chaise" | "armchair" | "bed" | "table" | "chair" | "stool" | "wardrobe" | "cabinet" | "bookcase" | "floor-lamp" | "wall-lamp" | "pendant-lamp" | "mirror" | "picture";
+export const FURNITURE_CATEGORIES = ["Wardrobes", "Cupboards", "Bookcases", "Coffee tables", "Sofas", "Beds", "Tables", "Desks", "Chairs", "Lighting", "Wall décor"] as const;
 export type FurnitureCategory = typeof FURNITURE_CATEGORIES[number];
+
+export type FurnitureCollisionPart =
+  | { kind: "box"; width: number; depth: number; x?: number; z?: number }
+  | { kind: "circle"; radius: number; x?: number; z?: number };
 
 export type FurnitureCatalogItem = {
   id: string;
@@ -25,6 +30,19 @@ export type FurnitureCatalogItem = {
   materials?: string[];
   sourceCheckedAt?: string;
   modelProvenance?: "original-procedural";
+  collision?: { parts: FurnitureCollisionPart[] };
+  mount?: {
+    type: "floor" | "wall" | "ceiling";
+    /** Centre above the floor for wall-mounted pieces. */
+    elevation?: number;
+    /** Default distance from the ceiling to the lowest point of a pendant. */
+    drop?: number;
+  };
+  decor?: {
+    variant: "tripod-floor" | "reading-floor" | "pole-floor" | "lantern-floor" | "wall-spot" | "metal-pendant" | "woven-pendant" | "mirror" | "picture";
+    shadeDiameter?: number;
+    shadeHeight?: number;
+  };
   storage?: {
     doors: number;
     drawers?: number;
@@ -91,6 +109,10 @@ const CORE_FURNITURE_CATALOG: FurnitureCatalogItem[] = [
     accentColor: "#4f504f",
     articleNumber: "392.167.54",
     sourceUrl: "https://www.ikea.com/dk/da/p/friheten-hjornesovesofa-med-opbevaring-skiftebo-morkegra-s39216754/",
+    collision: { parts: [
+      { kind: "box", width: 2.3, depth: 0.88, z: 0.315 },
+      { kind: "box", width: 0.782, depth: 1.51, x: -0.713 },
+    ] },
   },
   {
     id: "ikea-malm-160-09929373",
@@ -255,6 +277,7 @@ export const FURNITURE_CATALOG: FurnitureCatalogItem[] = [
   ...EXTENDED_IKEA_CATALOG,
   ...RETAIL_FURNITURE_CATALOG,
   ...BOOKSHELF_CATALOG,
+  ...DECOR_CATALOG,
 ];
 
 export function furnitureBrand(item: FurnitureCatalogItem) {
@@ -274,13 +297,52 @@ export function furnitureCatalogItem(catalogId: string) {
   return FURNITURE_CATALOG.find((item) => item.id === catalogId);
 }
 
-export function furnitureFootprint(item: FurnitureCatalogItem, rotation: number) {
-  const cosine = Math.abs(Math.cos(rotation));
-  const sine = Math.abs(Math.sin(rotation));
-  return {
-    width: item.width * cosine + item.depth * sine,
-    depth: item.width * sine + item.depth * cosine,
-  };
+export function furnitureCollisionParts(item: FurnitureCatalogItem): FurnitureCollisionPart[] {
+  if (item.collision?.parts.length) return item.collision.parts;
+  if (item.shape === "chaise") {
+    const bodyDepth = item.bodyDepth ?? item.depth;
+    return [
+      { kind: "box", width: item.width, depth: bodyDepth, z: (item.depth - bodyDepth) / 2 },
+      { kind: "box", width: item.width * 0.34, depth: item.depth, x: -item.width * 0.31 },
+    ];
+  }
+  if (item.table?.top === "round" || item.shape === "floor-lamp" || item.shape === "pendant-lamp") {
+    return [{ kind: "circle", radius: Math.max(item.width, item.depth) / 2 }];
+  }
+  return [{ kind: "box", width: item.width, depth: item.depth }];
+}
+
+export function furnitureFootprintBounds(item: FurnitureCatalogItem, rotation: number, mirrored = false) {
+  const cosine = Math.cos(rotation);
+  const sine = Math.sin(rotation);
+  return furnitureCollisionParts(item).reduce((bounds, part) => {
+    const localX = (part.x ?? 0) * (mirrored ? -1 : 1);
+    const localZ = part.z ?? 0;
+    const centerX = localX * cosine + localZ * sine;
+    const centerZ = -localX * sine + localZ * cosine;
+    const halfX = part.kind === "circle" ? part.radius : Math.abs(cosine) * part.width / 2 + Math.abs(sine) * part.depth / 2;
+    const halfZ = part.kind === "circle" ? part.radius : Math.abs(sine) * part.width / 2 + Math.abs(cosine) * part.depth / 2;
+    return {
+      minX: Math.min(bounds.minX, centerX - halfX), maxX: Math.max(bounds.maxX, centerX + halfX),
+      minZ: Math.min(bounds.minZ, centerZ - halfZ), maxZ: Math.max(bounds.maxZ, centerZ + halfZ),
+    };
+  }, { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity });
+}
+
+export function furnitureFootprint(item: FurnitureCatalogItem, rotation: number, mirrored = false) {
+  const bounds = furnitureFootprintBounds(item, rotation, mirrored);
+  return { width: bounds.maxX - bounds.minX, depth: bounds.maxZ - bounds.minZ };
+}
+
+export function furnitureVerticalBounds(item: FurnitureCatalogItem, ceilingHeight = 2.7) {
+  if (item.mount?.type === "wall") {
+    const center = item.mount.elevation ?? 1.45;
+    return { min: center - item.height / 2, max: center + item.height / 2 };
+  }
+  if (item.mount?.type === "ceiling") {
+    return { min: ceilingHeight - Math.max(item.height, item.mount.drop ?? item.height), max: ceilingHeight };
+  }
+  return { min: 0, max: item.height };
 }
 
 export function clampFurniturePosition(
@@ -289,13 +351,16 @@ export function clampFurniturePosition(
   rotation: number,
   x: number,
   z: number,
+  mirrored = false,
 ) {
-  const footprint = furnitureFootprint(item, rotation);
+  const footprint = furnitureFootprintBounds(item, rotation, mirrored);
   const padding = 0.08;
-  const halfWidth = Math.min(slab.width / 2, footprint.width / 2 + padding);
-  const halfDepth = Math.min(slab.depth / 2, footprint.depth / 2 + padding);
+  const minimumX = slab.x - slab.width / 2 + padding - footprint.minX;
+  const maximumX = slab.x + slab.width / 2 - padding - footprint.maxX;
+  const minimumZ = slab.z - slab.depth / 2 + padding - footprint.minZ;
+  const maximumZ = slab.z + slab.depth / 2 - padding - footprint.maxZ;
   return {
-    x: Math.max(slab.x - slab.width / 2 + halfWidth, Math.min(slab.x + slab.width / 2 - halfWidth, x)),
-    z: Math.max(slab.z - slab.depth / 2 + halfDepth, Math.min(slab.z + slab.depth / 2 - halfDepth, z)),
+    x: minimumX <= maximumX ? Math.max(minimumX, Math.min(maximumX, x)) : slab.x - (footprint.minX + footprint.maxX) / 2,
+    z: minimumZ <= maximumZ ? Math.max(minimumZ, Math.min(maximumZ, z)) : slab.z - (footprint.minZ + footprint.maxZ) / 2,
   };
 }

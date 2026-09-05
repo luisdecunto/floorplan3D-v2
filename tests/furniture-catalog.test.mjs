@@ -6,24 +6,28 @@ import {
   filterFurnitureCatalog,
   furnitureBrand,
   clampFurniturePosition,
+  furnitureCollisionParts,
   furnitureFootprint,
 } from "../app/furniture-catalog.ts";
 import {
   furnitureIntersectsWalls,
+  furnitureIntersectsFurniture,
+  findNearestWallMountedFurniturePlacement,
   resolveFurnitureMove,
   snapFurniturePosition,
   validFurniturePosition,
 } from "../app/furniture-placement.ts";
 import { RETAIL_FURNITURE_CATALOG } from "../app/retail-furniture-catalog.ts";
 import { BOOKSHELF_CATALOG } from "../app/bookshelf-catalog.ts";
+import { DECOR_CATALOG } from "../app/decor-catalog.ts";
 
 test("starter furniture has unique IDs and positive real-world dimensions", () => {
   assert.equal(new Set(FURNITURE_CATALOG.map(({ id }) => id)).size, FURNITURE_CATALOG.length);
   assert.ok(FURNITURE_CATALOG.length >= 35);
   for (const item of FURNITURE_CATALOG) {
-    assert.ok(item.width > 0.25);
-    assert.ok(item.depth > 0.25);
-    assert.ok(item.height > 0.25);
+    assert.ok(item.width > 0.01);
+    assert.ok(item.depth > 0.01);
+    assert.ok(item.height > 0.01);
   }
 });
 
@@ -34,7 +38,7 @@ test("bookcase references retain the six checked BILLY and IVAR configurations",
     "594.038.15": [0.89, 0.30, 1.79], "394.039.39": [1.74, 0.30, 1.79],
   };
   assert.equal(BOOKSHELF_CATALOG.length, 6);
-  assert.equal(FURNITURE_CATALOG.length, 75);
+  assert.equal(FURNITURE_CATALOG.length, 84);
   for (const item of BOOKSHELF_CATALOG) {
     assert.deepEqual([item.width, item.depth, item.height], expected[item.articleNumber], item.name);
     assert.equal(item.category, "Bookcases");
@@ -50,7 +54,7 @@ test("bookcase references retain the six checked BILLY and IVAR configurations",
 test("expanded IKEA catalogue covers the requested furniture families", () => {
   const ikeaItems = FURNITURE_CATALOG.filter(({ collection }) => collection === "IKEA");
   assert.ok(ikeaItems.length >= 30);
-  for (const category of ["Sofas", "Beds", "Tables", "Desks", "Chairs"]) {
+  for (const category of ["Sofas", "Beds", "Tables", "Desks", "Chairs", "Lighting", "Wall décor"]) {
     assert.ok(ikeaItems.some((item) => item.category === category), `missing ${category}`);
   }
   assert.ok(ikeaItems.some((item) => item.name.includes("coffee table")));
@@ -86,7 +90,7 @@ test("new retailer references retain checked assembled dimensions, materials and
     "3650133": [1.60, 0.80, 0.75], "3630073": [1.40, 0.60, 0.75],
   };
   assert.equal(RETAIL_FURNITURE_CATALOG.length, 22);
-  assert.equal(FURNITURE_CATALOG.length, 75);
+  assert.equal(FURNITURE_CATALOG.length, 84);
   for (const item of RETAIL_FURNITURE_CATALOG) {
     assert.deepEqual([item.width, item.depth, item.height], expected[item.articleNumber], item.name);
     assert.ok(item.materials.length > 0);
@@ -127,6 +131,60 @@ test("FANDRUP sizes and configurable tables retain their planning metadata", () 
   const adjustable = RETAIL_FURNITURE_CATALOG.find((item) => item.id === "jysk-svaneke-160-3650133");
   assert.deepEqual(adjustable.table.heightAdjustable, { min: 0.70, max: 1.19 });
   assert.equal(adjustable.category, "Desks");
+});
+
+test("lighting and wall décor retain retailer links and mount-aware dimensions", () => {
+  assert.equal(DECOR_CATALOG.length, 9);
+  assert.equal(DECOR_CATALOG.filter((item) => item.category === "Lighting").length, 7);
+  assert.equal(DECOR_CATALOG.filter((item) => item.category === "Wall décor").length, 2);
+  for (const item of DECOR_CATALOG) {
+    assert.ok(item.mount);
+    assert.ok(item.decor);
+    assert.equal(item.modelProvenance, "original-procedural");
+    assert.match(item.sourceUrl, item.brand === "IKEA" ? /^https:\/\/www\.ikea\.com\/dk\/da\/p\// : /^https:\/\/jysk\.dk\//);
+  }
+  const lauters = DECOR_CATALOG.find((item) => item.id === "ikea-lauters-floor-30405042");
+  assert.deepEqual([lauters.width, lauters.depth, lauters.height], [0.62, 0.62, 1.51]);
+  assert.equal(DECOR_CATALOG.find((item) => item.id === "ikea-nissedal-mirror-30320316").mount.elevation, 1.20);
+  assert.equal(DECOR_CATALOG.find((item) => item.id === "ikea-sinnerlig-pendant-70311697").mount.drop, 0.90);
+});
+
+test("compound and circular collision fits the real furniture shape", () => {
+  const friheten = FURNITURE_CATALOG.find((item) => item.id === "ikea-friheten-39216754");
+  const harbor = FURNITURE_CATALOG.find((item) => item.id === "harbor-chaise");
+  const roundTable = FURNITURE_CATALOG.find((item) => item.id === "ikea-kragsta-20286638");
+  assert.equal(furnitureCollisionParts(friheten).length, 2);
+  assert.equal(furnitureCollisionParts(harbor).length, 2);
+  assert.equal(furnitureCollisionParts(roundTable)[0].kind, "circle");
+  const sofa = { id: "sofa", item: friheten, position: { x: 0, z: 0 }, rotation: 0 };
+  // Inside the old 2.30 × 1.51 prism, but clear of both arms of the actual L.
+  assert.equal(furnitureIntersectsFurniture(roundTable, 0, { x: 0.60, z: -0.70 }, [sofa]), false);
+  assert.equal(furnitureIntersectsFurniture(roundTable, 0, { x: 0.60, z: -0.40 }, [sofa]), true);
+  // Mirroring moves the chaise into that right-hand void and therefore blocks it.
+  assert.equal(furnitureIntersectsFurniture(roundTable, 0, { x: 0.60, z: -0.70 }, [{ ...sofa, mirrored: true }]), true);
+  assert.deepEqual(furnitureFootprint(friheten, 0), { width: 2.3, depth: 1.51 });
+});
+
+test("wall-mounted décor starts flush to a clear wall run and faces the room", () => {
+  const mirror = DECOR_CATALOG.find((item) => item.id === "ikea-nissedal-mirror-30320316");
+  const level = {
+    ceilingHeight: 2.7,
+    slab: { x: 0, z: -1.5, width: 6, depth: 3 }, fixtures: [], stairs: [],
+    walls: [{ id: "north", start: [-3, 0], end: [3, 0], thickness: 0.18, openings: [{ kind: "window", offset: 2.5, width: 1, height: 1 }] }],
+  };
+  const mounted = findNearestWallMountedFurniturePlacement(mirror, level, { x: -1.5, z: -1.5 });
+  assert.ok(mounted);
+  assert.ok(mounted.position.z < 0);
+  assert.ok(Math.abs(mounted.rotation) < 1e-9);
+  assert.equal(furnitureIntersectsWalls(mirror, level, mounted.rotation, mounted.position), false);
+});
+
+test("ceiling lamps can occupy the plan above ordinary floor furniture", () => {
+  const pendant = DECOR_CATALOG.find((item) => item.id === "ikea-skurup-pendant-80407114");
+  const table = FURNITURE_CATALOG.find((item) => item.id === "ikea-lisabo-table-80382439");
+  const wardrobe = FURNITURE_CATALOG.find((item) => item.id === "jysk-vedde-3601087");
+  assert.equal(furnitureIntersectsFurniture(pendant, 0, { x: 0, z: 0 }, [{ id: "table", item: table, position: { x: 0, z: 0 }, rotation: 0 }], false, 2.7), false);
+  assert.equal(furnitureIntersectsFurniture(pendant, 0, { x: 0, z: 0 }, [{ id: "wardrobe", item: wardrobe, position: { x: 0, z: 0 }, rotation: 0 }], false, 2.7), true);
 });
 
 test("new retail furniture retains wall and furniture collision at rotated placements", () => {
