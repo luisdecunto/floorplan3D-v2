@@ -30,9 +30,10 @@ type UndoEntry = { inverse: CollaborationOperation; condition: CollaborationCond
 
 const SERVER_URL = (import.meta.env.VITE_COLLABORATION_URL as string | undefined)?.replace(/\/$/, "")
   ?? "https://planform-collaboration.luisdcnt.workers.dev";
+const LEGACY_SERVER_URL = "https://planform-collaboration.cocoscraper-app.workers.dev";
 
-function webSocketUrl(roomId: string) {
-  const url = new URL(`${SERVER_URL}/rooms/${encodeURIComponent(roomId)}/socket`);
+function webSocketUrl(roomId: string, serverUrl: string) {
+  const url = new URL(`${serverUrl}/rooms/${encodeURIComponent(roomId)}/socket`);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.href;
 }
@@ -59,6 +60,7 @@ export function useCollaboration({
   const callbacks = useRef({ onDocument, onNotice, onFatalError });
   const socket = useRef<WebSocket | null>(null);
   const session = useRef<CollaborationCredentials | null>(null);
+  const sessionEndpoint = useRef(SERVER_URL);
   const revision = useRef(0);
   const authenticated = useRef(false);
   const initialOpen = useRef(false);
@@ -94,7 +96,7 @@ export function useCollaboration({
     }));
   }, []);
 
-  const connect = useCallback(function connectToRoom(next: CollaborationCredentials, opening: boolean) {
+  const connect = useCallback(function connectToRoom(next: CollaborationCredentials, opening: boolean, endpoint = SERVER_URL) {
     if (!SERVER_URL) {
       setStatus("error");
       callbacks.current.onNotice("Live collaboration is not configured in this build.");
@@ -104,6 +106,7 @@ export function useCollaboration({
     if (reconnectTimer.current !== null) window.clearTimeout(reconnectTimer.current);
     socket.current?.close(1000, "Replaced connection");
     session.current = next;
+    sessionEndpoint.current = endpoint;
     setHistoryEntries([]);
     setHistorySnapshot(null);
     setHistoryLoadingRevision(null);
@@ -112,7 +115,7 @@ export function useCollaboration({
     stopped.current = false;
     authenticated.current = false;
     setStatus(reconnectAttempt.current ? "reconnecting" : "connecting");
-    const ws = new WebSocket(webSocketUrl(next.roomId));
+    const ws = new WebSocket(webSocketUrl(next.roomId, endpoint));
     socket.current = ws;
     ws.addEventListener("open", () => {
       ws.send(JSON.stringify({
@@ -145,6 +148,10 @@ export function useCollaboration({
           renderCanonical(validateFloorplanDocument(message.document), false);
         }
         if (message.code === "history-not-found") setHistoryLoadingRevision(null);
+        if (message.code === "room-missing" && endpoint === SERVER_URL) {
+          connectToRoom(next, opening, LEGACY_SERVER_URL);
+          return;
+        }
         if (message.code === "unauthorized" || message.code === "room-missing") {
           stopped.current = true;
           setStatus("error");
@@ -207,7 +214,7 @@ export function useCollaboration({
       const delay = Math.min(12_000, 800 * 2 ** reconnectAttempt.current++);
       reconnectTimer.current = window.setTimeout(() => {
         const current = session.current;
-        if (current && !stopped.current) connectToRoom(current, false);
+        if (current && !stopped.current) connectToRoom(current, false, sessionEndpoint.current);
       }, delay);
     });
     ws.addEventListener("error", () => ws.close());
