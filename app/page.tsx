@@ -10,6 +10,7 @@ import { createFloorplanDocumentV2, documentRegions, documentStructures, documen
 import { downloadProject, parseProject } from "./project-storage";
 import { createProjectShareUrl, decodeSharedProject, sharedProjectPayload, ShareLinkTooLargeError } from "./project-share";
 import { collaborationInvite } from "./collaboration-protocol";
+import { CollaborationHistory } from "./collaboration-history";
 import { useCollaboration } from "./use-collaboration";
 import { inspectFloorplan } from "./floorplan-intake";
 import { useWorkspaceProject } from "./use-workspace-project";
@@ -53,29 +54,17 @@ export default function Home() {
   const [showGrid, setShowGrid] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [historyTargetRevision, setHistoryTargetRevision] = useState<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
   const intakeGeneration = useRef(0);
   const intakeAbort = useRef<AbortController | null>(null);
   const sharedProjectStarted = useRef(false);
   const editor = useRef<HTMLDivElement>(null);
-  const furnishings = useMemo(() => projectFurnishings(history.present), [history.present]);
-  const levels = useMemo(() => project ? documentSceneLevels(project) : sampleLevels, [project]);
-  const regions = useMemo(() => project ? documentRegions(project) : [], [project]);
-  const structures = useMemo(() => project ? documentStructures(project) : {}, [project]);
-  const floor = levels.find((level) => level.id === activeLevel) ?? levels[0];
-  const visibleLevels = useMemo(() => new Set(wholeBuilding ? levels.map((level) => level.id) : [activeLevel]), [wholeBuilding, levels, activeLevel]);
-  const selected = furnishings.find((placement) => placement.id === selectedId) ?? null;
-  const editing = draft ?? selected;
-  const draftPreview = draft && floor ? previewPlacement(draft, floor, furnishings, gridSnap) : null;
-  const reviewing = panel === "plan";
-  useEffect(() => {
-    if (editing?.id && !panel) editor.current?.focus({ preventScroll: true });
-  }, [editing?.id, panel]);
 
   function resetWorkspace(firstLevel: string) {
     setActiveLevel(firstLevel); setFocusedLevel(firstLevel); setSelectedWall(null); setSelectedId(null);
-    setDraft(null); setPanel(null); setWholeBuilding(false); setExploded(false); setView("perspective");
+    setDraft(null); setPanel(null); setHistoryTargetRevision(null); setWholeBuilding(false); setExploded(false); setView("perspective");
     setFitRequest((value) => value + 1); setNotice(""); setStage("workspace");
   }
   function openProject(next: FloorplanDocumentV2) {
@@ -86,6 +75,7 @@ export default function Home() {
   }
   const collaboration = useCollaboration({
     onDocument: (next, initial) => {
+      setHistoryTargetRevision(null);
       dispatch({ type: "sync", snapshot: { kind: "project", document: next } });
       if (initial) {
         resetWorkspace(documentRegions(next)[0].id);
@@ -95,7 +85,26 @@ export default function Home() {
     onNotice: setNotice,
     onFatalError: () => setStage("welcome"),
   });
+  const currentFurnishings = useMemo(() => projectFurnishings(history.present), [history.present]);
+  const historyPreview = historyTargetRevision !== null && collaboration.historySnapshot?.revision === historyTargetRevision
+    ? collaboration.historySnapshot
+    : null;
+  const displayedProject = historyPreview?.document ?? project;
+  const furnishings = historyPreview?.document.furnishings ?? currentFurnishings;
+  const levels = useMemo(() => displayedProject ? documentSceneLevels(displayedProject) : sampleLevels, [displayedProject]);
+  const regions = useMemo(() => displayedProject ? documentRegions(displayedProject) : [], [displayedProject]);
+  const structures = useMemo(() => displayedProject ? documentStructures(displayedProject) : {}, [displayedProject]);
+  const floor = levels.find((level) => level.id === activeLevel) ?? levels[0];
+  const visibleLevels = useMemo(() => new Set(wholeBuilding ? levels.map((level) => level.id) : [activeLevel]), [wholeBuilding, levels, activeLevel]);
+  const selected = historyPreview ? null : currentFurnishings.find((placement) => placement.id === selectedId) ?? null;
+  const editing = draft ?? selected;
+  const draftPreview = !historyPreview && draft && floor ? previewPlacement(draft, floor, currentFurnishings, gridSnap) : null;
+  const reviewing = panel === "plan";
+  useEffect(() => {
+    if (editing?.id && !panel) editor.current?.focus({ preventScroll: true });
+  }, [editing?.id, panel]);
   function commitSnapshot(next: typeof history.present) {
+    if (historyPreview) return;
     if (next === history.present) return;
     const before = history.present;
     dispatch({ type: "commit", snapshot: next });
@@ -131,6 +140,7 @@ export default function Home() {
     catch { setNotice("This is not a valid Planform project file. Your current project has not changed."); }
   }
   function commitProject(next: FloorplanDocumentV2) {
+    if (historyPreview) { setNotice("Exit version preview before editing the apartment."); return; }
     if (next !== project) commitSnapshot({ kind: "project", document: next });
   }
   function changeFloor(id: string) {
@@ -161,6 +171,7 @@ export default function Home() {
     if (!show) setExploded(false);
   }
   function undo() {
+    if (historyPreview) { setNotice("Exit version preview before editing the apartment."); return; }
     if (draft) { setDraft(null); setNotice("Preview cancelled. No saved furniture was changed."); return; }
     if (collaboration.active) {
       if (collaboration.undo()) setNotice("Undo sent to the shared apartment.");
@@ -176,6 +187,7 @@ export default function Home() {
     return previewPlacement({ ...placement, x, z }, level, furnishings, gridSnap);
   }
   function commitMove(id: string, x: number, z: number) {
+    if (historyPreview) { setNotice("Exit version preview before editing the apartment."); return; }
     const result = previewMove(id, x, z);
     if (draft?.id === id) { setDraft({ ...draft, ...result.position }); return; }
     if (result.collision) { setNotice(collisionDescription(result.collision) + " Move was not saved."); return; }
@@ -184,6 +196,7 @@ export default function Home() {
     commitSnapshot(withFurnishings(history.present, furnishings.map((placement) => placement.id === id ? { ...placement, ...result.position } : placement)));
   }
   function chooseFurniture(item: FurnitureCatalogItem) {
+    if (historyPreview) { setNotice("Exit version preview before adding furniture."); return; }
     if (!floor) return;
     const placement: FurniturePlacement = { id: "furniture-" + crypto.randomUUID(), catalogId: item.id, levelId: floor.id, x: floor.slab.x, z: floor.slab.z, rotation: 0 };
     const obstacles = placementObstacles(furnishings, placement);
@@ -193,6 +206,7 @@ export default function Home() {
     setWholeBuilding(false); setExploded(false); setNotice("");
   }
   function changePlacement(next: FurniturePlacement) {
+    if (historyPreview) { setNotice("Exit version preview before editing the apartment."); return; }
     const level = levels.find((item) => item.id === next.levelId);
     if (!level) return;
     const result = previewPlacement(next, level, furnishings, gridSnap);
@@ -201,19 +215,41 @@ export default function Home() {
     commitSnapshot(withFurnishings(history.present, furnishings.map((item) => item.id === next.id ? { ...next, ...result.position } : item)));
   }
   function removeSelected() {
+    if (historyPreview) { setNotice("Exit version preview before editing the apartment."); return; }
     if (!selected) return;
     commitSnapshot(withFurnishings(history.present, furnishings.filter((item) => item.id !== selected.id))); setSelectedId(null);
   }
   function cancelPlacement() { const wasDraft = Boolean(draft); setDraft(null); setSelectedId(null); if (wasDraft) setPanel("catalogue"); }
   function finishPlacement() {
+    if (historyPreview) { setNotice("Exit version preview before editing the apartment."); return; }
     if (draft && floor) {
       const next = confirmPlacement(history.present, draft, floor, gridSnap);
       if (next === history.present) return;
       commitSnapshot(next); setSelectedId(draft.id); setDraft(null); setNotice("Furniture placed.");
     } else setSelectedId(null);
   }
-  function toggleReview() { setDraft(null); setSelectedId(null); setPanel(reviewing ? null : "plan"); if (!reviewing) setFocusedLevel(activeLevel); }
-  function openCatalogue() { setDraft(null); setSelectedId(null); setPanel("catalogue"); }
+  function toggleReview() {
+    if (historyPreview) { setNotice("Exit version preview before opening plan editing."); return; }
+    setDraft(null); setSelectedId(null); setPanel(reviewing ? null : "plan"); if (!reviewing) setFocusedLevel(activeLevel);
+  }
+  function openCatalogue() {
+    if (historyPreview) { setNotice("Exit version preview before adding furniture."); return; }
+    setDraft(null); setSelectedId(null); setPanel("catalogue");
+  }
+  function previewHistory(revision: number) {
+    setHistoryTargetRevision(revision);
+    if (collaboration.historySnapshot?.revision === revision) return;
+    if (!collaboration.requestHistorySnapshot(revision)) {
+      setHistoryTargetRevision(null);
+      setNotice("Wait until the live apartment is connected before opening history.");
+    }
+  }
+  function restoreHistory() {
+    if (!project || !historyPreview) return;
+    if (!window.confirm(`Restore version ${historyPreview.revision}? This will create a new shared version.`)) return;
+    if (collaboration.restore(project, historyPreview.document)) setNotice("Restoring this version for everyone…");
+    else setNotice("Finish the current shared change before restoring a version.");
+  }
   function exportProject() { if (project) { downloadProject(project); setNotice("Project file exported. Send this file to share your apartment."); } }
   async function copyShareLink(url: string) {
     if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(url); return; }
@@ -295,29 +331,30 @@ export default function Home() {
   return <>{inputs}<WorkspaceShell name={project?.name ?? "Sample apartment"} saveStatus={saveStatus} levels={levels} activeLevel={activeLevel} onFloor={changeFloor} view={view} onView={setView} onFit={() => setFitRequest((value) => value + 1)}
     wholeBuilding={wholeBuilding} onWholeBuilding={changeWholeBuilding} wallCutaway={wallCutaway} onWallCutaway={setWallCutaway}
     collaboration={collaboration.active ? { status: collaboration.status, people: collaboration.people } : null}
-    onMenu={() => { setDraft(null); setSelectedId(null); setPanel(panel === "project" ? null : "project"); }} onAdd={openCatalogue} onReview={toggleReview} onUndo={undo} canUndo={Boolean(draft || (collaboration.active ? collaboration.canUndo : history.past.length))}
+    onMenu={() => { setDraft(null); setSelectedId(null); setPanel(panel === "project" ? null : "project"); }} onAdd={openCatalogue} onReview={toggleReview} onUndo={undo} canUndo={Boolean(!historyPreview && (draft || (collaboration.active ? collaboration.canUndo : history.past.length)))}
     needsScale={Boolean(project && project.scale.source !== "user")} reviewing={reviewing} panelOpen={Boolean(panel || editing)} notice={notice} clearNotice={() => setNotice("")}
     panels={<>
       <WorkspacePanel title="Furniture" open={panel === "catalogue"} onClose={() => setPanel(null)} className="ws-catalogue-panel"><FurnitureLibrary onChoose={chooseFurniture} /></WorkspacePanel>
       <WorkspacePanel title="Project" open={panel === "project"} onClose={() => setPanel(null)}>
         {collaboration.active && <div className="ws-live-card"><span className={`ws-live-dot ${collaboration.status}`} /><span><strong>{collaboration.status === "live" ? `Live together · ${collaboration.people} ${collaboration.people === 1 ? "person" : "people"}` : collaboration.status === "reconnecting" ? "Reconnecting…" : "Connecting…"}</strong><small>Everyone with the secret link can edit.</small></span></div>}
-        <div className="ws-menu-actions"><button disabled={!project || sharing} onClick={() => void shareLiveProject()}><Users size={18} />{sharing ? "Preparing link…" : collaboration.active ? "Share collaboration link" : "Collaborate live"}</button><button disabled={!project || sharing} onClick={() => void shareProject()}><Share2 size={18} />Send an editable copy</button>{collaboration.active && <button onClick={() => { collaboration.leave(); setNotice("You left the live room. This apartment is now a local copy."); }}><LogOut size={18} />Leave live room</button>}<button disabled={!project} onClick={exportProject}><Download size={18} />Export project file</button><button onClick={() => projectInput.current?.click()}><FolderOpen size={18} />Import project</button><button onClick={() => { collaboration.leave(); setNotice(""); setStage("welcome"); }}>Back to start</button></div>
+        <div className="ws-menu-actions"><button disabled={!project || sharing} onClick={() => void shareLiveProject()}><Users size={18} />{sharing ? "Preparing link…" : collaboration.active ? "Share collaboration link" : "Collaborate live"}</button><button disabled={!project || sharing} onClick={() => void shareProject()}><Share2 size={18} />Send an editable copy</button>{collaboration.active && <button onClick={() => { collaboration.leave(); setHistoryTargetRevision(null); setNotice("You left the live room. This apartment is now a local copy."); }}><LogOut size={18} />Leave live room</button>}<button disabled={!project} onClick={exportProject}><Download size={18} />Export project file</button><button onClick={() => projectInput.current?.click()}><FolderOpen size={18} />Import project</button><button onClick={() => { collaboration.leave(); setHistoryTargetRevision(null); setNotice(""); setStage("welcome"); }}>Back to start</button></div>
+        {collaboration.active && <CollaborationHistory entries={collaboration.historyEntries} previewRevision={historyTargetRevision} loadingRevision={collaboration.historyLoadingRevision} canRestore={Boolean(historyPreview && collaboration.status === "live")} onPreview={previewHistory} onRestore={restoreHistory} />}
         <h3>View settings</h3>
-        <details><summary>Furniture on this floor ({furnishings.filter((item) => item.levelId === activeLevel).length})</summary>
+        {!historyPreview && <details><summary>Furniture on this floor ({furnishings.filter((item) => item.levelId === activeLevel).length})</summary>
           <div className="ws-menu-actions">{furnishings.filter((item) => item.levelId === activeLevel).map((item) => <button key={item.id} onClick={() => { setWholeBuilding(false); setExploded(false); setSelectedId(item.id); setPanel(null); }}>Edit {furnitureCatalogItem(item.catalogId)?.name ?? item.catalogId}</button>)}</div>
-        </details>
+        </details>}
         <label className="ws-check"><input type="checkbox" disabled={!wholeBuilding} checked={exploded} onChange={(event) => setExploded(event.target.checked)} />Separate floors</label>
         <label className="ws-check"><input type="checkbox" checked={gridSnap} onChange={(event) => setGridSnap(event.target.checked)} />Snap to 10 cm grid</label>
         <label className="ws-check"><input type="checkbox" checked={showGrid} onChange={(event) => setShowGrid(event.target.checked)} />Show guide grid (50 cm)</label>
         <label className="ws-check"><input type="checkbox" checked={showLegend} onChange={(event) => setShowLegend(event.target.checked)} />Show model legend</label>
         <details><summary>Controls & project info</summary><p>Tap to select. Drag a selected piece to move it. Drag empty space to orbit in 3D or pan in Top. Use two fingers to pan and zoom.</p><p>Keyboard: arrows move 10 cm, Q/E rotate 15°, M mirrors, Delete removes, Esc cancels, Ctrl/Cmd+Z undoes.</p><p>Collaborate live keeps everyone with the secret link in the same apartment. Send an editable copy creates an independent snapshot. Neither link contains the original floorplan image.</p><p>Build {typeof __BUILD_ID__ === "undefined" ? "development" : __BUILD_ID__} · mobile workspace</p></details>
       </WorkspacePanel>
-      <WorkspacePanel title="Check plan" open={reviewing} onClose={() => setPanel(null)}><PlanControls project={project} activeLevel={activeLevel} selectedWall={selectedWall} onSelectWall={setSelectedWall} onChange={commitProject} onMessage={setNotice} /></WorkspacePanel>
+      <WorkspacePanel title="Check plan" open={reviewing} onClose={() => setPanel(null)}><PlanControls project={displayedProject} activeLevel={activeLevel} selectedWall={selectedWall} onSelectWall={setSelectedWall} onChange={commitProject} onMessage={setNotice} /></WorkspacePanel>
     </>}
     context={!panel && editing ? <FurnitureControls placement={editing} draft={Boolean(draft)} issue={draftPreview?.collision ? collisionDescription(draftPreview.collision) : null}
       onRotate={(degrees) => changePlacement({ ...editing, rotation: editing.rotation + degrees * Math.PI / 180 })} onMirror={() => changePlacement({ ...editing, mirrored: !editing.mirrored })}
       onNudge={(x, z) => commitMove(editing.id, editing.x + x, editing.z + z)} onDelete={removeSelected} onDone={finishPlacement} onCancel={cancelPlacement} /> : null}>
-      <div ref={editor} className="ws-viewer" role="application" aria-label="Apartment editor" aria-describedby="editor-keyboard-help" tabIndex={0} style={{ visibility: reviewing ? "hidden" : "visible" }} inert={reviewing}>
+      <div ref={editor} className="ws-viewer" role="application" aria-label="Apartment editor" aria-describedby="editor-keyboard-help" tabIndex={0} style={{ visibility: reviewing ? "hidden" : "visible" }} inert={reviewing || Boolean(historyPreview)}>
         <span id="editor-keyboard-help" className="visually-hidden">Selected furniture: arrows move, Q and E rotate, M mirrors, Enter confirms, Escape cancels. Use Project menu to select existing furniture by name.</span>
         <ViewerBoundary><Suspense fallback={<div className="viewer-loading">Opening your apartment…</div>}>
           <TwinViewer decorating={!wholeBuilding && !reviewing} exploded={wholeBuilding && exploded} furnishings={furnishings} gridSnapEnabled={showGrid} levels={levels}
@@ -327,6 +364,7 @@ export default function Home() {
             onDraftPosition={(x, z) => { if (draft) { const result = previewMove(draft.id, x, z); setDraft({ ...draft, ...result.position }); } }} showLegend={showLegend} />
         </Suspense></ViewerBoundary>
       </div>
+      {historyPreview && <div className="ws-history-banner" role="status"><span>Previewing shared version {historyPreview.revision}. Editing is paused.</span><button onClick={() => setHistoryTargetRevision(null)}>Exit preview</button></div>}
       {reviewing && <div className="ws-plan-stage"><PlanReview imageUrl={project?.source.previewDataUrl ?? null} regions={regions} structures={structures} analysisSize={project ? { width: project.source.width, height: project.source.height } : null} activeLevel={activeLevel} focusedLevel={focusedLevel} selectedWallId={selectedWall} setActiveLevel={changeFloor} setFocusedLevel={setFocusedLevel} setSelectedWallId={setSelectedWall} /></div>}
     </WorkspaceShell></>;
 }

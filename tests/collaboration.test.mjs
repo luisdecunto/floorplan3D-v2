@@ -4,6 +4,7 @@ import {
   applyCollaborationOperation,
   collaborationConditionAfter,
   collaborationConditionMatches,
+  collaborationHistoryChange,
   collaborationInvite,
   collaborationOperation,
   createCollaborationInviteUrl,
@@ -62,4 +63,28 @@ test("structural changes remain atomic and revision guarded", () => {
   const condition = collaborationConditionAfter(operation, 7);
   assert.equal(collaborationConditionMatches(renamed, 7, condition), true);
   assert.equal(collaborationConditionMatches(renamed, 8, condition), false);
+});
+
+test("history metadata distinguishes furniture changes and restores", () => {
+  const original = { ...project(), furnishings: [chair] };
+  const added = { ...chair, id: "chair-2", catalogId: "teodores-chair" };
+  const add = collaborationHistoryChange(
+    { kind: "upsert-furniture", placement: added, updatedAt: "later" },
+    original,
+  );
+  assert.deepEqual(add, { kind: "add-furniture", targetId: "chair-2", catalogId: "teodores-chair" });
+
+  const move = collaborationHistoryChange(
+    { kind: "upsert-furniture", placement: { ...chair, x: 2 }, updatedAt: "later" },
+    original,
+  );
+  assert.deepEqual(move, { kind: "move-furniture", targetId: "chair-1", catalogId: chair.catalogId });
+
+  const remove = collaborationHistoryChange(
+    { kind: "remove-furniture", id: chair.id, updatedAt: "later" },
+    original,
+  );
+  assert.deepEqual(remove, { kind: "remove-furniture", targetId: chair.id, catalogId: chair.catalogId });
+  assert.deepEqual(collaborationHistoryChange({ kind: "replace-document", document: original }, original), { kind: "document" });
+  assert.deepEqual(collaborationHistoryChange({ kind: "replace-document", document: original }, original, "restore"), { kind: "restore" });
 });

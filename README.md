@@ -14,7 +14,7 @@ This repository currently contains the first product vertical slice:
 - metric scene entities for levels, walls and openings;
 - a touch-enabled Three.js viewer with true door and window gaps;
 - local project persistence and JSON backup;
-- secret-link live collaboration backed by a per-apartment Durable Object;
+- secret-link live collaboration backed by a per-apartment Durable Object, with a bounded activity timeline and version restore;
 - a mobile-accessible GitHub Pages deployment.
 
 The trained semantic CV pipeline, arbitrary-geometry correction, account-based ownership, and cross-device room discovery are future milestones. The current project identifies its analyser as a browser-based geometry/topology fallback rather than presenting it as a trained model.
@@ -40,7 +40,7 @@ npm test
 
 The browser currently owns image analysis, responsive review, local persistence, and derived 3D rendering. The canonical model stores editable building structure, not meshes. A future Python/GPU service can add semantic proposals without replacing the geometry/topology validator or the canonical document.
 
-Live collaboration is the only server-backed feature. The static application stays on GitHub Pages, while `collaboration-worker/` provides persistent shared rooms and hibernating WebSockets through Cloudflare Durable Objects. Source floorplan images are removed before room creation. The edit capability lives in the collaboration link fragment and is never sent as part of an ordinary page request.
+Live collaboration is the only server-backed feature. The static application stays on GitHub Pages, while `collaboration-worker/` provides persistent shared rooms and hibernating WebSockets through Cloudflare Durable Objects. Source floorplan images are removed before room creation. The edit capability lives in the collaboration link fragment and is never sent as part of an ordinary page request. Each room keeps the latest 50 accepted revisions with collaborator labels and read-only snapshots; restoring one creates a new revision and is guarded against concurrent edits.
 
 The production collaboration endpoint is `https://planform-collaboration.cocoscraper-app.workers.dev`. Set `VITE_COLLABORATION_URL` to override it for another deployment.
 

@@ -15,6 +15,7 @@ const server = await createServer({
 after(() => server.close());
 const { WorkspaceShell } = await server.ssrLoadModule("/app/workspace-shell.tsx");
 const { PANEL_SWIPE_THRESHOLD, panelExpansionAfterSwipe } = await server.ssrLoadModule("/app/workspace-panel.tsx");
+const { CollaborationHistory } = await server.ssrLoadModule("/app/collaboration-history.tsx");
 const noop = () => {};
 function shell(overrides = {}) {
   return WorkspaceShell({
@@ -81,4 +82,17 @@ test("bottom-sheet swipes snap upward to full catalogue and downward to the room
   assert.equal(panelExpansionAfterSwipe(true, PANEL_SWIPE_THRESHOLD), false);
   assert.equal(panelExpansionAfterSwipe(false, -PANEL_SWIPE_THRESHOLD + 1), false);
   assert.equal(panelExpansionAfterSwipe(true, PANEL_SWIPE_THRESHOLD - 1), true);
+});
+
+test("collaboration history shows readable edits and restore affordance", () => {
+  const entries = [
+    { revision: 4, operationId: "op-4", actorId: "a", actorName: "Guest 24", createdAt: "2026-09-05T12:00:00.000Z", kind: "move-furniture", catalogId: "ikea-friheten-39216754", targetId: "sofa" },
+    { revision: 3, operationId: "op-3", actorId: "b", actorName: "Luis", createdAt: "2026-09-05T11:00:00.000Z", kind: "add-furniture", catalogId: "ikea-lack-table-40104294", targetId: "table" },
+  ];
+  const html = renderToStaticMarkup(CollaborationHistory({ entries, previewRevision: 4, loadingRevision: null, canRestore: true, onPreview: noop, onRestore: noop }));
+  assert.match(html, /Recent changes/);
+  assert.match(html, /moved FRIHETEN corner sofa-bed/);
+  assert.match(html, /added LACK coffee table/);
+  assert.match(html, /Previewing this version/);
+  assert.match(html, /Restore/);
 });

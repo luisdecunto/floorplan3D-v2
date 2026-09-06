@@ -111,6 +111,26 @@
 .ws-live-card { display: flex; align-items: center; gap: 10px; padding: 12px; margin-bottom: 12px; border: 1px solid #cfe1d4; background: #f2f8f3; border-radius: 12px; }
 .ws-live-card > span:last-child { display: flex; flex-direction: column; gap: 2px; }
 .ws-live-card small { color: #64736a; }
+.ws-history { border-top: 1px solid var(--ws-border); margin-top: 18px; padding-top: 4px; }
+.ws-history-heading { display: flex; align-items: center; gap: 10px; padding: 10px 0 8px; }
+.ws-history-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: #edf2e9; color: var(--ws-accent); flex: 0 0 auto; }
+.ws-history-heading h3 { margin: 0; font-size: 15px; }
+.ws-history-heading p { margin: 2px 0 0; color: #69766d; font-size: 12px; font-weight: 400; }
+.ws-history-list { list-style: none; margin: 0; padding: 0; border: 1px solid #e1e5dd; border-radius: 12px; overflow: hidden; }
+.ws-history-list > li + li { border-top: 1px solid #e5e8e1; }
+.ws-history-list > li.selected { background: #f1f6ef; }
+.ws-app .ws-history-entry { width: 100%; min-height: 58px; padding: 8px 10px; display: flex; align-items: center; justify-content: flex-start; gap: 9px; border: 0; border-radius: 0; background: transparent; text-align: left; }
+.ws-app .ws-history-entry:hover { background: #f1f6ef; }
+.ws-history-revision { min-width: 35px; color: #687a6d; font-size: 12px; font-variant-numeric: tabular-nums; }
+.ws-history-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.ws-history-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.ws-history-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #728078; font-size: 11px; }
+.ws-history-loading { width: 17px; text-align: center; color: #6a7c70; font-weight: 700; }
+.ws-history-actions { min-height: 44px; padding: 0 10px 8px 54px; display: flex; align-items: center; gap: 8px; color: #5d7063; font-size: 12px; }
+.ws-history-actions > span { flex: 1; }
+.ws-app .ws-history-actions button { min-height: 36px; padding: 6px 10px; font-size: 12px; }
+.ws-history-banner { position: absolute; top: 12px; left: 12px; right: 12px; z-index: 5; max-width: 520px; margin: 0 auto; padding: 6px 8px 6px 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid #c4d8c6; border-radius: 12px; background: #f5faf3ed; color: #2d5f49; box-shadow: 0 5px 20px #21372b14; font-size: 13px; }
+.ws-app .ws-history-banner button { min-height: 36px; padding: 6px 10px; font-size: 12px; }
 .ws-plan-controls form { margin: 12px 0; }
 .ws-measure { background: #f0f4eb; padding: 12px; border-radius: 12px; }
 .ws-app .ws-measure label { margin-top: 0; }

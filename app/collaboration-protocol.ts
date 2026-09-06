@@ -4,6 +4,7 @@ import type { FurniturePlacement } from "./furniture-catalog.ts";
 export const COLLABORATION_PROTOCOL_VERSION = 1;
 export const MAX_COLLABORATION_DOCUMENT_BYTES = 2_000_000;
 export const MAX_COLLABORATION_MESSAGE_BYTES = 2_100_000;
+export const MAX_COLLABORATION_HISTORY = 50;
 
 export type CollaborationCredentials = {
   roomId: string;
@@ -15,18 +16,35 @@ export type CollaborationOperation =
   | { kind: "remove-furniture"; id: string; updatedAt: string }
   | { kind: "replace-document"; document: FloorplanDocumentV2 };
 
+export type CollaborationHistoryKind = "initial" | "add-furniture" | "move-furniture" | "remove-furniture" | "document" | "restore";
+
+export type CollaborationHistoryEntry = {
+  revision: number;
+  operationId: string;
+  actorId: string;
+  actorName: string;
+  createdAt: string;
+  kind: CollaborationHistoryKind;
+  targetId?: string;
+  catalogId?: string;
+};
+
 export type CollaborationCondition =
   | { kind: "furniture"; id: string; value: FurniturePlacement | null }
   | { kind: "revision"; revision: number };
 
 export type CollaborationClientMessage =
   | { type: "join"; protocol: typeof COLLABORATION_PROTOCOL_VERSION; editKey: string; clientId: string; name: string }
-  | { type: "update"; operationId: string; baseRevision: number; operation: CollaborationOperation; condition?: CollaborationCondition };
+  | { type: "update"; operationId: string; baseRevision: number; operation: CollaborationOperation; condition?: CollaborationCondition; action?: "restore" }
+  | { type: "history-request"; revision: number };
 
 export type CollaborationServerMessage =
   | { type: "snapshot"; document: FloorplanDocumentV2; revision: number; operationId?: string; actorId?: string; people: number }
+  | { type: "history"; entries: CollaborationHistoryEntry[] }
+  | { type: "history-snapshot"; document: FloorplanDocumentV2; revision: number }
+  | { type: "history-entry"; entry: CollaborationHistoryEntry }
   | { type: "presence"; people: number }
-  | { type: "error"; code: "unauthorized" | "invalid-message" | "room-missing" | "stale" | "undo-conflict" | "rate-limited"; message: string; document?: FloorplanDocumentV2; revision?: number };
+  | { type: "error"; code: "unauthorized" | "invalid-message" | "room-missing" | "stale" | "undo-conflict" | "history-not-found" | "rate-limited"; message: string; document?: FloorplanDocumentV2; revision?: number };
 
 function comparableDocument(document: FloorplanDocumentV2) {
   return { ...document, furnishings: [], updatedAt: "" };
@@ -81,6 +99,32 @@ export function applyCollaborationOperation(
       : [...furnishings, operation.placement],
     updatedAt: operation.updatedAt,
   };
+}
+
+/** Derives the small, non-sensitive activity record stored beside a revision. */
+export function collaborationHistoryChange(
+  operation: CollaborationOperation,
+  before: FloorplanDocumentV2,
+  action?: "restore",
+): Pick<CollaborationHistoryEntry, "kind" | "targetId" | "catalogId"> {
+  if (action === "restore") return { kind: "restore" };
+  if (operation.kind === "upsert-furniture") {
+    const existed = (before.furnishings ?? []).some((item) => item.id === operation.placement.id);
+    return {
+      kind: existed ? "move-furniture" : "add-furniture",
+      targetId: operation.placement.id,
+      catalogId: operation.placement.catalogId,
+    };
+  }
+  if (operation.kind === "remove-furniture") {
+    const removed = (before.furnishings ?? []).find((item) => item.id === operation.id);
+    return {
+      kind: "remove-furniture",
+      targetId: operation.id,
+      ...(removed ? { catalogId: removed.catalogId } : {}),
+    };
+  }
+  return { kind: "document" };
 }
 
 export function collaborationConditionAfter(

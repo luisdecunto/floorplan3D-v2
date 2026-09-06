@@ -7,9 +7,11 @@ import {
   collaborationInvite,
   collaborationOperation,
   COLLABORATION_PROTOCOL_VERSION,
+  MAX_COLLABORATION_HISTORY,
   createCollaborationInviteUrl,
   type CollaborationCondition,
   type CollaborationCredentials,
+  type CollaborationHistoryEntry,
   type CollaborationOperation,
   type CollaborationServerMessage,
 } from "./collaboration-protocol.ts";
@@ -21,6 +23,7 @@ type PendingUpdate = {
   inverse: CollaborationOperation;
   condition?: CollaborationCondition;
   undo: boolean;
+  action?: "restore";
 };
 type UndoEntry = { inverse: CollaborationOperation; condition: CollaborationCondition };
 
@@ -54,6 +57,9 @@ export function useCollaboration({
   const [status, setStatus] = useState<CollaborationStatus>("idle");
   const [people, setPeople] = useState(1);
   const [canUndo, setCanUndo] = useState(false);
+  const [historyEntries, setHistoryEntries] = useState<CollaborationHistoryEntry[]>([]);
+  const [historySnapshot, setHistorySnapshot] = useState<{ revision: number; document: FloorplanDocumentV2 } | null>(null);
+  const [historyLoadingRevision, setHistoryLoadingRevision] = useState<number | null>(null);
   const [credentials, setCredentials] = useState<CollaborationCredentials | null>(null);
   const callbacks = useRef({ onDocument, onNotice, onFatalError });
   const socket = useRef<WebSocket | null>(null);
@@ -71,6 +77,8 @@ export function useCollaboration({
   useEffect(() => { callbacks.current = { onDocument, onNotice, onFatalError }; }, [onDocument, onNotice, onFatalError]);
 
   const renderCanonical = useCallback((canonical: FloorplanDocumentV2, initial: boolean) => {
+    setHistorySnapshot(null);
+    setHistoryLoadingRevision(null);
     let visible = canonical;
     const optimistic = [inFlight.current, ...queue.current].filter(Boolean) as PendingUpdate[];
     for (const pending of optimistic) visible = applyCollaborationOperation(visible, pending.operation);
@@ -87,6 +95,7 @@ export function useCollaboration({
       baseRevision: revision.current,
       operation: pending.operation,
       ...(pending.condition ? { condition: pending.condition } : {}),
+      ...(pending.action ? { action: pending.action } : {}),
     }));
   }, []);
 
@@ -100,6 +109,9 @@ export function useCollaboration({
     if (reconnectTimer.current !== null) window.clearTimeout(reconnectTimer.current);
     socket.current?.close(1000, "Replaced connection");
     session.current = next;
+    setHistoryEntries([]);
+    setHistorySnapshot(null);
+    setHistoryLoadingRevision(null);
     setCredentials(next);
     initialOpen.current = opening;
     stopped.current = false;
@@ -121,11 +133,22 @@ export function useCollaboration({
       try { message = JSON.parse(String(event.data)) as CollaborationServerMessage; }
       catch { return; }
       if (message.type === "presence") { setPeople(message.people); return; }
+      if (message.type === "history") { setHistoryEntries(message.entries.slice(0, MAX_COLLABORATION_HISTORY)); return; }
+      if (message.type === "history-entry") {
+        setHistoryEntries((entries) => [message.entry, ...entries.filter((entry) => entry.revision !== message.entry.revision)].slice(0, MAX_COLLABORATION_HISTORY));
+        return;
+      }
+      if (message.type === "history-snapshot") {
+        setHistorySnapshot({ revision: message.revision, document: validateFloorplanDocument(message.document) });
+        setHistoryLoadingRevision(null);
+        return;
+      }
       if (message.type === "error") {
         if (message.document && typeof message.revision === "number") {
           revision.current = message.revision;
           renderCanonical(validateFloorplanDocument(message.document), false);
         }
+        if (message.code === "history-not-found") setHistoryLoadingRevision(null);
         if (message.code === "unauthorized" || message.code === "room-missing") {
           stopped.current = true;
           setStatus("error");
@@ -169,6 +192,8 @@ export function useCollaboration({
       if (socket.current !== ws || stopped.current) return;
       authenticated.current = false;
       setCanUndo(false);
+      setHistorySnapshot(null);
+      setHistoryLoadingRevision(null);
       if (inFlight.current) {
         queue.current.unshift(inFlight.current);
         inFlight.current = null;
@@ -226,6 +251,26 @@ export function useCollaboration({
     return true;
   }, [pump, status]);
 
+  const requestHistorySnapshot = useCallback((targetRevision: number) => {
+    if (!session.current || status !== "live" || !Number.isInteger(targetRevision)) return false;
+    const current = socket.current;
+    if (!current || current.readyState !== WebSocket.OPEN) return false;
+    setHistoryLoadingRevision(targetRevision);
+    current.send(JSON.stringify({ type: "history-request", revision: targetRevision }));
+    return true;
+  }, [status]);
+
+  const restore = useCallback((before: FloorplanDocumentV2, target: FloorplanDocumentV2) => {
+    if (!session.current || status !== "live" || inFlight.current || queue.current.length) return false;
+    const operation = collaborationOperation(shareableProject(before), shareableProject(target));
+    const inverse = collaborationOperation(shareableProject(target), shareableProject(before));
+    if (!operation || !inverse) return false;
+    queue.current.push({ id: crypto.randomUUID(), operation, inverse, undo: false, action: "restore" });
+    setCanUndo(false);
+    pump();
+    return true;
+  }, [pump, status]);
+
   const start = useCallback(async (document: FloorplanDocumentV2, applicationUrl: string) => {
     if (!SERVER_URL) throw new Error("Live collaboration is not configured in this build.");
     if (session.current) return createCollaborationInviteUrl(applicationUrl, session.current);
@@ -255,6 +300,9 @@ export function useCollaboration({
     queue.current = [];
     inFlight.current = null;
     setCanUndo(false);
+    setHistoryEntries([]);
+    setHistorySnapshot(null);
+    setHistoryLoadingRevision(null);
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
   }, []);
 
@@ -265,6 +313,11 @@ export function useCollaboration({
     canUndo,
     commit,
     undo,
+    historyEntries,
+    historySnapshot,
+    historyLoadingRevision,
+    requestHistorySnapshot,
+    restore,
     start,
     leave,
     inviteUrl: credentials && typeof window !== "undefined" ? createCollaborationInviteUrl(window.location.href, credentials) : null,

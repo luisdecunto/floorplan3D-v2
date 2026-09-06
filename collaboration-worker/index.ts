@@ -2,11 +2,14 @@ import { DurableObject } from "cloudflare:workers";
 import {
   applyCollaborationOperation,
   collaborationConditionMatches,
+  collaborationHistoryChange,
   COLLABORATION_PROTOCOL_VERSION,
+  MAX_COLLABORATION_HISTORY,
   isCollaborationOperation,
   MAX_COLLABORATION_DOCUMENT_BYTES,
   MAX_COLLABORATION_MESSAGE_BYTES,
   type CollaborationClientMessage,
+  type CollaborationHistoryEntry,
   type CollaborationServerMessage,
 } from "../app/collaboration-protocol.ts";
 import type { FloorplanDocumentV2 } from "../app/floorplan-document.ts";
@@ -32,6 +35,18 @@ type RoomRow = {
   document: string;
   edit_hash: string;
   revision: number;
+};
+
+type RoomHistoryRow = {
+  revision: number;
+  operation_id: string;
+  actor_id: string;
+  actor_name: string;
+  kind: CollaborationHistoryEntry["kind"];
+  target_id: string | null;
+  catalog_id: string | null;
+  created_at: number;
+  document: string;
 };
 
 function encodedBytes(value: unknown) {
@@ -124,6 +139,17 @@ export class ApartmentRoom extends DurableObject<Env> {
         operation_id TEXT PRIMARY KEY,
         revision INTEGER NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS room_history (
+        revision INTEGER PRIMARY KEY,
+        operation_id TEXT NOT NULL UNIQUE,
+        actor_id TEXT NOT NULL,
+        actor_name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        target_id TEXT,
+        catalog_id TEXT,
+        created_at INTEGER NOT NULL,
+        document TEXT NOT NULL
+      ) STRICT;
     `);
   }
 
@@ -137,13 +163,81 @@ export class ApartmentRoom extends DurableObject<Env> {
       editHash,
       Date.now(),
     );
+    this.ctx.storage.sql.exec(
+      "INSERT INTO room_history (revision, operation_id, actor_id, actor_name, kind, created_at, document) VALUES (0, ?, ?, ?, ?, ?, ?)",
+      `initial-${randomToken(8)}`,
+      "system",
+      "Planform",
+      "initial",
+      Date.now(),
+      stored,
+    );
     return true;
   }
 
   private room() {
-    return this.ctx.storage.sql.exec<RoomRow>(
+    const room = this.ctx.storage.sql.exec<RoomRow>(
       "SELECT document, edit_hash, revision FROM room_state WHERE id = 1",
     ).toArray()[0] ?? null;
+    if (room) this.ensureHistory(room);
+    return room;
+  }
+
+  private ensureHistory(room: RoomRow) {
+    const count = this.ctx.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM room_history").toArray()[0]?.count ?? 0;
+    if (count > 0) return;
+    this.ctx.storage.sql.exec(
+      "INSERT OR IGNORE INTO room_history (revision, operation_id, actor_id, actor_name, kind, created_at, document) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      room.revision,
+      `history-bootstrap-${room.revision}`,
+      "system",
+      "Planform",
+      "initial",
+      Date.now(),
+      room.document,
+    );
+  }
+
+  private historyEntries() {
+    return this.ctx.storage.sql.exec<RoomHistoryRow>(
+      "SELECT revision, operation_id, actor_id, actor_name, kind, target_id, catalog_id, created_at, document FROM room_history ORDER BY revision DESC LIMIT ?",
+      MAX_COLLABORATION_HISTORY,
+    ).toArray().map((row): CollaborationHistoryEntry => ({
+      revision: row.revision,
+      operationId: row.operation_id,
+      actorId: row.actor_id,
+      actorName: row.actor_name,
+      createdAt: new Date(row.created_at).toISOString(),
+      kind: row.kind,
+      ...(row.target_id ? { targetId: row.target_id } : {}),
+      ...(row.catalog_id ? { catalogId: row.catalog_id } : {}),
+    }));
+  }
+
+  private historySnapshot(revision: number) {
+    return this.ctx.storage.sql.exec<Pick<RoomHistoryRow, "revision" | "document">>(
+      "SELECT revision, document FROM room_history WHERE revision = ?",
+      revision,
+    ).toArray()[0] ?? null;
+  }
+
+  private recordHistory(entry: CollaborationHistoryEntry, document: string) {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO room_history (revision, operation_id, actor_id, actor_name, kind, target_id, catalog_id, created_at, document) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      entry.revision,
+      entry.operationId,
+      entry.actorId,
+      entry.actorName,
+      entry.kind,
+      entry.targetId ?? null,
+      entry.catalogId ?? null,
+      Date.parse(entry.createdAt),
+      document,
+    );
+    this.ctx.storage.sql.exec(
+      "DELETE FROM room_history WHERE revision NOT IN (SELECT revision FROM room_history ORDER BY revision DESC LIMIT ?)",
+      MAX_COLLABORATION_HISTORY,
+    );
   }
 
   private sockets() {
@@ -218,6 +312,7 @@ export class ApartmentRoom extends DurableObject<Env> {
       });
       const people = this.people();
       this.send(webSocket, { type: "snapshot", document: JSON.parse(room.document), revision: room.revision, people });
+      this.send(webSocket, { type: "history", entries: this.historyEntries() });
       this.broadcastPresence();
       return;
     }
@@ -231,12 +326,25 @@ export class ApartmentRoom extends DurableObject<Env> {
       this.send(webSocket, { type: "error", code: "rate-limited", message: "Too many changes at once. Please wait a moment." });
       return;
     }
+    const room = this.room();
+    if (!room) return;
+    if (message.type === "history-request") {
+      if (!Number.isInteger(message.revision) || message.revision < 0 || message.revision > room.revision) {
+        this.send(webSocket, { type: "error", code: "history-not-found", message: "That apartment version is no longer available.", revision: room.revision });
+        return;
+      }
+      const historical = this.historySnapshot(message.revision);
+      if (!historical) {
+        this.send(webSocket, { type: "error", code: "history-not-found", message: "That apartment version is no longer available.", revision: room.revision });
+        return;
+      }
+      this.send(webSocket, { type: "history-snapshot", revision: historical.revision, document: JSON.parse(historical.document) });
+      return;
+    }
     if (message.type !== "update" || !/^[A-Za-z0-9_-]{10,100}$/.test(message.operationId) || !isCollaborationOperation(message.operation)) {
       this.send(webSocket, { type: "error", code: "invalid-message", message: "That apartment change was invalid." });
       return;
     }
-    const room = this.room();
-    if (!room) return;
     const canonical = JSON.parse(room.document) as FloorplanDocumentV2;
     const duplicate = this.ctx.storage.sql.exec<{ revision: number }>(
       "SELECT revision FROM applied_operations WHERE operation_id = ?",
@@ -286,6 +394,15 @@ export class ApartmentRoom extends DurableObject<Env> {
       nextRevision,
     );
     this.ctx.storage.sql.exec("DELETE FROM applied_operations WHERE rowid NOT IN (SELECT rowid FROM applied_operations ORDER BY rowid DESC LIMIT 1000)");
+    const historyEntry: CollaborationHistoryEntry = {
+      revision: nextRevision,
+      operationId: message.operationId,
+      actorId: attachment.clientId,
+      actorName: attachment.name,
+      createdAt: new Date(now).toISOString(),
+      ...collaborationHistoryChange(message.operation, canonical, message.action),
+    };
+    this.recordHistory(historyEntry, stored);
     this.broadcast({
       type: "snapshot",
       document: next,
@@ -294,6 +411,7 @@ export class ApartmentRoom extends DurableObject<Env> {
       actorId: attachment.clientId,
       people: this.people(),
     });
+    this.broadcast({ type: "history-entry", entry: historyEntry });
   }
 
   webSocketClose() { this.broadcastPresence(); }
