@@ -30,7 +30,6 @@ type UndoEntry = { inverse: CollaborationOperation; condition: CollaborationCond
 
 const SERVER_URL = (import.meta.env.VITE_COLLABORATION_URL as string | undefined)?.replace(/\/$/, "")
   ?? "https://planform-collaboration.luisdcnt.workers.dev";
-const LEGACY_SERVER_URL = "https://planform-collaboration.cocoscraper-app.workers.dev";
 
 function webSocketUrl(roomId: string, serverUrl: string) {
   const url = new URL(`${serverUrl}/rooms/${encodeURIComponent(roomId)}/socket`);
@@ -148,10 +147,6 @@ export function useCollaboration({
           renderCanonical(validateFloorplanDocument(message.document), false);
         }
         if (message.code === "history-not-found") setHistoryLoadingRevision(null);
-        if (message.code === "room-missing" && endpoint === SERVER_URL) {
-          connectToRoom(next, opening, LEGACY_SERVER_URL);
-          return;
-        }
         if (message.code === "unauthorized" || message.code === "room-missing") {
           stopped.current = true;
           setStatus("error");

@@ -42,7 +42,7 @@ The browser currently owns image analysis, responsive review, local persistence,
 
 Live collaboration is the only server-backed feature. The static application stays on GitHub Pages, while `collaboration-worker/` provides persistent shared rooms and hibernating WebSockets through Cloudflare Durable Objects. Source floorplan images are removed before room creation. The edit capability lives in the collaboration link fragment and is never sent as part of an ordinary page request. Each room keeps the latest 50 accepted revisions with collaborator labels and read-only snapshots; restoring one creates a new revision and is guarded against concurrent edits.
 
-The production collaboration endpoint is `https://planform-collaboration.luisdcnt.workers.dev`, hosted in the `luisdcnt@gmail.com` Cloudflare account. Set `VITE_COLLABORATION_URL` to override it for another deployment. Durable Object room state is account-bound and cannot be moved between accounts, so the app makes one automatic fallback to the legacy Cocoscraper Worker for a pre-migration invite link. New rooms are always created in Luisdcnt.
+The production collaboration endpoint is `https://planform-collaboration.luisdcnt.workers.dev`, hosted in the `luisdcnt@gmail.com` Cloudflare account. Set `VITE_COLLABORATION_URL` to override it for another deployment. New rooms are created and stored in Luisdcnt.
 
 The website is built with React, TypeScript, React Three Fiber and Three.js. The same client application has two build targets while the hosting migration is in progress: vinext for the existing Sites deployment and a static Vite bundle for GitHub Pages.
 

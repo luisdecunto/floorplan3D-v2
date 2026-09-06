@@ -53,7 +53,6 @@ test("GitHub Pages bundle includes wall-safe furniture editing controls", async 
   assert.match(javascript, /Send an editable copy/);
   assert.match(javascript, /Live apartment joined/);
   assert.match(javascript, /planform-collaboration\.luisdcnt\.workers\.dev/);
-  assert.match(javascript, /planform-collaboration\.cocoscraper-app\.workers\.dev/);
   assert.match(javascript, /Opening shared apartment/);
   assert.match(javascript, /without the original floorplan image/);
   assert.doesNotMatch(javascript, /fetch\("\/api\/share/);
