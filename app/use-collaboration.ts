@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { validateFloorplanDocument, type FloorplanDocumentV2 } from "./floorplan-document.ts";
 import { shareableProject } from "./project-share.ts";
+import { rememberIdentity, type CollaboratorIdentity } from "./collaborator-identity.ts";
 import {
   applyCollaborationOperation,
   collaborationConditionAfter,
@@ -36,15 +37,6 @@ function webSocketUrl(roomId: string) {
   return url.href;
 }
 
-function collaboratorName() {
-  const key = "planform-collaborator-name";
-  const existing = localStorage.getItem(key);
-  if (existing) return existing;
-  const generated = `Guest ${Math.floor(10 + Math.random() * 90)}`;
-  localStorage.setItem(key, generated);
-  return generated;
-}
-
 export function useCollaboration({
   onDocument,
   onNotice,
@@ -56,6 +48,9 @@ export function useCollaboration({
 }) {
   const [status, setStatus] = useState<CollaborationStatus>("idle");
   const [people, setPeople] = useState(1);
+  const [collaborators, setCollaborators] = useState<CollaboratorIdentity[]>([]);
+  const [pendingJoin, setPendingJoin] = useState<{ credentials: CollaborationCredentials; opening: boolean } | null>(null);
+  const identity = useRef<CollaboratorIdentity | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [historyEntries, setHistoryEntries] = useState<CollaborationHistoryEntry[]>([]);
   const [historySnapshot, setHistorySnapshot] = useState<{ revision: number; document: FloorplanDocumentV2 } | null>(null);
@@ -73,7 +68,7 @@ export function useCollaboration({
   const queue = useRef<PendingUpdate[]>([]);
   const inFlight = useRef<PendingUpdate | null>(null);
   const undoStack = useRef<UndoEntry[]>([]);
-  const clientId = useRef(crypto.randomUUID());
+  const clientId = useRef<string>(crypto.randomUUID());
   useEffect(() => { callbacks.current = { onDocument, onNotice, onFatalError }; }, [onDocument, onNotice, onFatalError]);
 
   const renderCanonical = useCallback((canonical: FloorplanDocumentV2, initial: boolean) => {
@@ -125,14 +120,15 @@ export function useCollaboration({
         protocol: COLLABORATION_PROTOCOL_VERSION,
         editKey: next.editKey,
         clientId: clientId.current,
-        name: collaboratorName(),
+        name: identity.current?.name ?? "Guest",
       }));
     });
     ws.addEventListener("message", (event) => {
       let message: CollaborationServerMessage;
       try { message = JSON.parse(String(event.data)) as CollaborationServerMessage; }
       catch { return; }
-      if (message.type === "presence") { setPeople(message.people); return; }
+      if (socket.current !== ws || stopped.current) return;
+      if (message.type === "presence") { setPeople(message.people); setCollaborators(message.collaborators ?? []); return; }
       if (message.type === "history") { setHistoryEntries(message.entries.slice(0, MAX_COLLABORATION_HISTORY)); return; }
       if (message.type === "history-entry") {
         setHistoryEntries((entries) => [message.entry, ...entries.filter((entry) => entry.revision !== message.entry.revision)].slice(0, MAX_COLLABORATION_HISTORY));
@@ -167,6 +163,7 @@ export function useCollaboration({
         }
         return;
       }
+      if (message.type !== "snapshot") return;
       authenticated.current = true;
       reconnectAttempt.current = 0;
       setStatus("live");
@@ -199,6 +196,7 @@ export function useCollaboration({
         inFlight.current = null;
       }
       setStatus("reconnecting");
+      setCollaborators([]);
       if (reconnectAttempt.current >= 6) {
         stopped.current = true;
         setStatus("error");
@@ -217,7 +215,7 @@ export function useCollaboration({
 
   useEffect(() => {
     const invite = collaborationInvite(window.location.hash);
-    if (invite) connect(invite, true);
+    if (invite) setPendingJoin({ credentials: invite, opening: true });
     return () => {
       stopped.current = true;
       if (reconnectTimer.current !== null) window.clearTimeout(reconnectTimer.current);
@@ -284,9 +282,9 @@ export function useCollaboration({
     const next = { roomId: body.roomId, editKey: body.editKey };
     const link = createCollaborationInviteUrl(applicationUrl, next);
     window.history.replaceState(null, "", link);
-    connect(next, false);
+    setPendingJoin({ credentials: next, opening: false });
     return link;
-  }, [connect]);
+  }, []);
 
   const leave = useCallback(() => {
     stopped.current = true;
@@ -294,6 +292,8 @@ export function useCollaboration({
     socket.current = null;
     session.current = null;
     setCredentials(null);
+    setPendingJoin(null);
+    setCollaborators([]);
     setStatus("idle");
     setPeople(1);
     undoStack.current = [];
@@ -307,6 +307,19 @@ export function useCollaboration({
   }, []);
 
   return {
+    pendingJoin: Boolean(pendingJoin),
+    join: (name: string) => {
+      if (!pendingJoin) return;
+      let storage: Pick<Storage, "getItem" | "setItem">;
+      try { storage = localStorage; } catch { storage = { getItem: () => null, setItem: () => {} }; }
+      identity.current = rememberIdentity(name, storage);
+      if (!identity.current.name) return;
+      clientId.current = identity.current.id;
+      connect(pendingJoin.credentials, pendingJoin.opening);
+      setPendingJoin(null);
+    },
+    collaborators,
+    selfId: clientId.current,
     active: Boolean(credentials),
     status,
     people,

@@ -43,7 +43,7 @@ export type CollaborationServerMessage =
   | { type: "history"; entries: CollaborationHistoryEntry[] }
   | { type: "history-snapshot"; document: FloorplanDocumentV2; revision: number }
   | { type: "history-entry"; entry: CollaborationHistoryEntry }
-  | { type: "presence"; people: number }
+  | { type: "presence"; people: number; collaborators?: { id: string; name: string }[] }
   | { type: "error"; code: "unauthorized" | "invalid-message" | "room-missing" | "stale" | "undo-conflict" | "history-not-found" | "rate-limited"; message: string; document?: FloorplanDocumentV2; revision?: number };
 
 function comparableDocument(document: FloorplanDocumentV2) {

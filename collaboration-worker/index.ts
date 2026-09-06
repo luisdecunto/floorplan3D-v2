@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { cleanCollaboratorName } from "../app/collaborator-identity.ts";
 import {
   applyCollaborationOperation,
   collaborationConditionMatches,
@@ -245,7 +246,16 @@ export class ApartmentRoom extends DurableObject<Env> {
   }
 
   private people() {
-    return this.sockets().filter((candidate) => candidate.deserializeAttachment()?.authenticated).length;
+    return this.collaborators().length;
+  }
+
+  private collaborators() {
+    const members = new Map<string, { id: string; name: string }>();
+    for (const candidate of this.sockets()) {
+      const member = candidate.deserializeAttachment();
+      if (member?.authenticated) members.set(member.clientId, { id: member.clientId, name: member.name });
+    }
+    return [...members.values()];
   }
 
   private send(webSocket: WebSocket, message: CollaborationServerMessage) {
@@ -259,7 +269,7 @@ export class ApartmentRoom extends DurableObject<Env> {
   }
 
   private broadcastPresence() {
-    this.broadcast({ type: "presence", people: this.people() });
+    this.broadcast({ type: "presence", people: this.people(), collaborators: this.collaborators() });
   }
 
   async fetch(request: Request) {
@@ -306,7 +316,7 @@ export class ApartmentRoom extends DurableObject<Env> {
       webSocket.serializeAttachment({
         authenticated: true,
         clientId: message.clientId.slice(0, 100),
-        name: message.name.slice(0, 60),
+        name: cleanCollaboratorName(message.name) || "Guest",
         windowStartedAt: Date.now(),
         messageCount: 0,
       });
@@ -414,8 +424,13 @@ export class ApartmentRoom extends DurableObject<Env> {
     this.broadcast({ type: "history-entry", entry: historyEntry });
   }
 
-  webSocketClose() { this.broadcastPresence(); }
-  webSocketError() { this.broadcastPresence(); }
+  webSocketClose(socket: HibernatingWebSocket) {
+    const attachment = socket.deserializeAttachment();
+    if (attachment) socket.serializeAttachment({ ...attachment, authenticated: false });
+    socket.close();
+    this.broadcastPresence();
+  }
+  webSocketError(socket: HibernatingWebSocket) { this.webSocketClose(socket); }
 }
 
 export default {

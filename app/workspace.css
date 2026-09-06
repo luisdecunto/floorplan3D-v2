@@ -210,3 +210,10 @@
 @media (prefers-reduced-motion: reduce) {
   .ws-app *, .ws-start * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+.ws-join { display: flex; flex-direction: column; gap: 14px; }
+.ws-join input { min-height: 48px; font: inherit; padding: 12px; width: 100%; box-sizing: border-box; }
+.ws-join button { min-height: 44px; }
+.ws-recent-names button { margin: 4px; max-width: 100%; overflow-wrap: anywhere; }
+.ws-collaborators { list-style: none; padding: 0; }
+.ws-collaborators li { display: flex; align-items: center; gap: 8px; padding: 8px 0; overflow-wrap: anywhere; }
+.ws-collaborators small { margin-left: auto; }

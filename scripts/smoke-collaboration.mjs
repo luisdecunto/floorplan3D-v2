@@ -52,7 +52,15 @@ async function join(clientId) {
 }
 
 const first = await join("smoke-one");
+const presence = waitFor(first.socket, (message) => message.type === "presence" && message.people === 2);
 const second = await join("smoke-two");
+assert.deepEqual((await presence).collaborators.map((member) => member.name).sort(), ["smoke-one", "smoke-two"]);
+const duplicatePresence = waitFor(first.socket, (message) => message.type === "presence");
+const duplicateTab = await join("smoke-two");
+assert.equal((await duplicatePresence).people, 2);
+const tabClosed = waitFor(first.socket, (message) => message.type === "presence");
+duplicateTab.socket.close();
+assert.equal((await tabClosed).people, 2);
 const operationId = crypto.randomUUID();
 const receivedByPartner = waitFor(second.socket, (message) => message.type === "snapshot" && message.operationId === operationId);
 first.socket.send(JSON.stringify({
@@ -65,6 +73,8 @@ const synchronized = await receivedByPartner;
 assert.equal(synchronized.revision, 1);
 assert.equal(synchronized.document.furnishings.find((item) => item.id === chair.id).x, 2);
 assert.equal(synchronized.document.source.previewDataUrl, undefined);
-first.socket.close();
+const departed = waitFor(first.socket, (message) => message.type === "presence" && message.people === 1);
 second.socket.close();
+assert.deepEqual((await departed).collaborators.map((member) => member.name), ["smoke-one"]);
+first.socket.close();
 console.log(`Live collaboration smoke test passed for room ${credentials.roomId}.`);

@@ -66,3 +66,6 @@ npm run deploy:collaboration
 ## Regression fixtures
 
 When present in a local checkout, user-supplied floorplans approved for internal product testing live in the Git-ignored `tests/fixtures/floorplans` directory. The local manifest records expected floor counts, arrangements, integrity hashes, and parsing challenges. These files are not repository or production assets, are excluded from deployment, and are not approved for model training or public redistribution.
+# Collaboration names
+
+Opening a live invite asks for a display name before joining. Recent names are saved on this device and reuse the same identity. The Project panel shows connected collaborators and marks your identity with “You”; multiple tabs with the same identity count once. Names are not verified accounts. Presence and history backend changes are pending deployment to the intended Cloudflare account.

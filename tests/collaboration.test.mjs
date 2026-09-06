@@ -1,5 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readIdentities, rememberIdentity, cleanCollaboratorName } from "../app/collaborator-identity.ts";
+
+test("returning names reuse identity and unavailable storage does not prevent joining", () => {
+  const data = new Map();
+  const storage = { getItem: (key) => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) };
+  const first = rememberIdentity("  Ana   Maria ", storage);
+  assert.equal(first.name, "Ana Maria");
+  assert.equal(rememberIdentity("ana maria", storage).id, first.id);
+  rememberIdentity("Luis", storage);
+  assert.equal(readIdentities(storage).length, 2);
+  assert.equal(cleanCollaboratorName("    "), "");
+  data.set("planform-identities", "{broken");
+  assert.deepEqual(readIdentities(storage), []);
+  const blocked = { getItem: () => { throw Error("denied"); }, setItem: () => { throw Error("denied"); } };
+  assert.equal(rememberIdentity("Ana", blocked).name, "Ana");
+});
 import {
   applyCollaborationOperation,
   collaborationConditionAfter,
