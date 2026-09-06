@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "planform-collaboration",
+  "account_id": "d720e1bfa6938accaa66af619bb6091f",
   "main": "collaboration-worker/index.ts",
   "compatibility_date": "2026-09-04",
   "durable_objects": {

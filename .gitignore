@@ -39,6 +39,7 @@ yarn-error.log*
 /dist/
 /pages-dist/
 /.wrangler/
+/.wrangler-luisdcnt/
 /outputs/
 /work/
 /planform-site.zip

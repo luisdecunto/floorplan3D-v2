@@ -29,7 +29,7 @@ type PendingUpdate = {
 type UndoEntry = { inverse: CollaborationOperation; condition: CollaborationCondition };
 
 const SERVER_URL = (import.meta.env.VITE_COLLABORATION_URL as string | undefined)?.replace(/\/$/, "")
-  ?? "https://planform-collaboration.cocoscraper-app.workers.dev";
+  ?? "https://planform-collaboration.luisdcnt.workers.dev";
 
 function webSocketUrl(roomId: string) {
   const url = new URL(`${SERVER_URL}/rooms/${encodeURIComponent(roomId)}/socket`);
