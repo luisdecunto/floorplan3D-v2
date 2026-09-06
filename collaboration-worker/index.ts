@@ -103,6 +103,7 @@ function allowedOrigin(request: Request) {
   try {
     const url = new URL(origin);
     if (url.origin === "https://luisdecunto.github.io") return url.origin;
+    if (url.protocol === "https:" && (url.hostname === "planform.pages.dev" || url.hostname.endsWith(".planform.pages.dev"))) return url.origin;
     if ((url.hostname === "localhost" || url.hostname === "127.0.0.1") && (url.protocol === "http:" || url.protocol === "https:")) return url.origin;
   } catch { return null; }
   return null;

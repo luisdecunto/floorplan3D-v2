@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import WebSocket from "ws";
 
 const endpoint = (process.env.PLANFORM_COLLABORATION_URL ?? "https://planform-collaboration.cocoscraper-app.workers.dev").replace(/\/$/, "");
-const origin = "https://luisdecunto.github.io";
+const origin = process.env.PLANFORM_ORIGIN ?? "https://luisdecunto.github.io";
 const now = new Date().toISOString();
 const chair = { id: "smoke-chair", catalogId: "ikea-adde", levelId: "ground", x: 1, z: 1, rotation: 0 };
 const document = {

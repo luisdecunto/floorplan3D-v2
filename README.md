@@ -56,6 +56,10 @@ npm run validate:pages
 
 The generated site lives in `pages-dist/`. GitHub Actions validates and deploys that directory on every push to `main`. The default project path is `/floorplan3D/`; set `PAGES_BASE_PATH=/` when moving to a custom domain.
 
+## Cloudflare Pages staging
+
+Planform is also deployed to [planform.pages.dev](https://planform.pages.dev) in the `luisdcnt@gmail.com` Cloudflare account. GitHub Pages remains the primary public deployment while this is evaluated. Use `npm run deploy:pages:cloudflare` to build for the root URL and publish the static site through the project’s Luisdcnt Wrangler profile.
+
 The public `VITE_COLLABORATION_URL` build variable points the static client at the collaboration Worker. Deploy that service with:
 
 ```bash
